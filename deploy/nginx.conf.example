@@ -1,0 +1,70 @@
+# =====================================================================
+# 协作台 后端 HTTPS 反代配置（示例）
+# 作用：把域名 https://你的域名 的 /api 与 /uploads 转发给本地 node 服务
+#       （node 跑在 127.0.0.1:3000），并强制 HTTPS + 安全响应头。
+# 适用：云服务器上已装 nginx；证书用 Let's Encrypt（certbot）签发。
+# =====================================================================
+
+# 1) HTTP 80 端口：强制跳转到 HTTPS（同时给 certbot 验证用）
+server {
+    listen 80;
+    server_name chat-api.yourdomain.com;   # ← 改成你的后端域名
+
+    # Let's Encrypt 验证目录（certbot 自动写入）
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # 其余全部 301 跳 HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# 2) HTTPS 443 端口：真正对外服务
+server {
+    listen 443 ssl http2;
+    server_name chat-api.yourdomain.com;   # ← 改成你的后端域名
+
+    # Let's Encrypt 证书路径（certbot 默认位置）
+    ssl_certificate     /etc/letsencrypt/live/chat-api.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/chat-api.yourdomain.com/privkey.pem;
+
+    # 基础加固（按需调整）
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # 安全响应头（与后端一致，双保险）
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+
+    # 上传大文件（图片单条 ≤100MB，预留余量）
+    client_max_body_size 140m;
+
+    # 前端跨域来源（必须等于 GitHub Pages 地址，否则浏览器拦截）
+    # 注意：nginx 的 add_header 不能动态读请求头，这里直接写死前端源
+    location / {
+        # 预检
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin "https://你的用户名.github.io" always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
+            return 204;
+        }
+
+        # 普通请求：转发给本地 node
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 给响应补 CORS 头（与后端 FRONTEND_ORIGIN 配合）
+        add_header Access-Control-Allow-Origin "https://你的用户名.github.io" always;
+        add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
+    }
+}

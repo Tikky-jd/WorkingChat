@@ -1,0 +1,18 @@
+[Unit]
+Description=Office Chat (协作台) Node Service
+After=network.target
+
+[Service]
+Type=simple
+# 宝塔默认用 www 用户跑站点，node 需要写 data/ 与 uploads/，因此用 www 用户
+User=www
+WorkingDirectory=/www/wwwroot/office-chat
+# 直接调用 start.sh（环境变量都写在 start.sh 里，改一处即可）
+ExecStart=/bin/bash /www/wwwroot/office-chat/deploy/start.sh
+Restart=always
+RestartSec=3
+# 环境变量兜底（若 start.sh 未设）
+Environment=PORT=3000
+
+[Install]
+WantedBy=multi-user.target

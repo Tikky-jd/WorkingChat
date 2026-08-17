@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob: https:; connect-src 'self' https:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'" />
+  <title>协作台 · 企业团队私有协作空间</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body data-theme="blue">
+  <div id="bgLayer"></div>
+  <div id="bgTint"></div>
+
+  <!-- 首页 / 落地页 -->
+  <div id="home" class="home hidden">
+    <header class="nav">
+      <div class="nav-inner">
+        <div class="nav-logo"><span class="nav-mark"></span>协作台</div>
+        <nav class="nav-links">
+          <a href="#feat">产品功能</a>
+          <a href="#secure">安全合规</a>
+          <a href="#flow">使用流程</a>
+        </nav>
+        <div class="nav-actions">
+          <button id="navLogin" class="btn-text">登录</button>
+          <button id="enterBtn" class="btn-primary nav-enter">进入协作台</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="hero-left">
+          <span class="hero-badge">🔒 私有部署 · 仅限受邀成员</span>
+          <h1 class="hero-title">企业团队的<br />私有协作空间</h1>
+          <p class="hero-sub">用「任务」组织每一次沟通——文字、图片随手收发，在线状态一目了然，界面还能换上你团队的配色与背景。数据自持，安全可控。</p>
+          <div class="hero-cta">
+            <button id="enterBtn2" class="btn-primary">进入协作台</button>
+            <a href="#feat" class="btn-ghost hero-ghost">查看功能</a>
+          </div>
+          <div class="hero-pills">
+            <span>✓ 邀请制准入</span>
+            <span>✓ 数据自持</span>
+            <span>✓ 零外部依赖</span>
+          </div>
+        </div>
+        <div class="hero-right">
+          <div class="mock">
+            <div class="mock-bar"><span></span><span></span><span></span></div>
+            <div class="mock-body">
+              <aside class="mock-side">
+                <div class="mock-logo">◆ 协作台</div>
+                <div class="mock-room active">任务一 · 周五例会</div>
+                <div class="mock-room">任务二 · 需求评审</div>
+                <div class="mock-room">任务三 · 团建</div>
+              </aside>
+              <div class="mock-chat">
+                <div class="mock-row other"><div class="mock-bubble">大家好，周五下午 3 点开会 🟢</div></div>
+                <div class="mock-row me"><div class="mock-bubble">收到，准时参加</div></div>
+                <div class="mock-row other"><div class="mock-bubble">议题我整理在文档里了</div></div>
+                <div class="mock-dots" title="3 人在线"><i></i><i></i><i></i><b>3</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="feat" class="section">
+      <div class="section-head">
+        <h2 class="section-title">产品功能</h2>
+        <p class="section-sub">为办公室团队打造的轻量协作工具</p>
+      </div>
+      <div class="feat-grid">
+        <div class="feat-card"><div class="feat-ico">🗂</div><h3>任务协作室</h3><p>左侧「任务一 / 二…」，每条沟通按任务归档，项目脉络清晰。</p></div>
+        <div class="feat-card"><div class="feat-ico">🔑</div><h3>邀请制准入</h3><p>管理员发放邀请码，用过即失效、未用长期有效，准入可控。</p></div>
+        <div class="feat-card"><div class="feat-ico">🟢</div><h3>在线状态</h3><p>进入任务即显示谁在线，多人时折叠为数字，协作更直观。</p></div>
+        <div class="feat-card"><div class="feat-ico">🖼</div><h3>图文消息</h3><p>文字 + 图片随手收发（≤100MB），消息按月自动清理。</p></div>
+        <div class="feat-card"><div class="feat-ico">🎨</div><h3>外观定制</h3><p>5 套配色模板 + 背景图，全局生效，打造团队专属界面。</p></div>
+        <div class="feat-card"><div class="feat-ico">🛡</div><h3>私有可控</h3><p>零外部依赖，数据存于自有服务器，完全自主掌控。</p></div>
+      </div>
+    </section>
+
+    <section id="secure" class="section alt">
+      <div class="section-head">
+        <h2 class="section-title">安全与合规</h2>
+        <p class="section-sub">企业数据，掌握在自己手里</p>
+      </div>
+      <div class="secure-grid">
+        <div class="secure-card"><div class="secure-ico">🔐</div><h3>受邀准入</h3><p>无邀请码无法注册，成员须由管理员授权，杜绝外部访问。</p></div>
+        <div class="secure-card"><div class="secure-ico">🗄</div><h3>数据自持</h3><p>全部消息与附件存于你的服务器，不依赖任何第三方平台。</p></div>
+        <div class="secure-card"><div class="secure-ico">♻</div><h3>定期清理</h3><p>超过 30 天的消息与图片自动清除，降低数据留存风险。</p></div>
+      </div>
+    </section>
+
+    <section id="flow" class="section">
+      <div class="section-head">
+        <h2 class="section-title">使用流程</h2>
+        <p class="section-sub">三步即可开始团队协作</p>
+      </div>
+      <div class="flow-grid">
+        <div class="flow-card"><div class="flow-num">1</div><h3>获取邀请码</h3><p>向管理员索取邀请码，用邮箱完成注册。</p></div>
+        <div class="flow-card"><div class="flow-num">2</div><h3>新建任务</h3><p>在左侧创建任务，或在已有任务中展开沟通。</p></div>
+        <div class="flow-card"><div class="flow-num">3</div><h3>协作沟通</h3><p>发文字、传图片，看在线伙伴，随时切换外观。</p></div>
+      </div>
+    </section>
+
+    <section class="cta-band">
+      <h2>准备好开始协作了吗？</h2>
+      <p>仅受邀成员可访问，请联系管理员获取邀请码。</p>
+      <button id="enterBtn3" class="btn-primary">进入协作台</button>
+    </section>
+
+    <footer class="home-foot">协作台 · 企业团队私有协作空间 · 仅授权成员可访问</footer>
+  </div>
+
+  <!-- 登录 / 注册 -->
+  <div id="login" class="login-wrap hidden">
+    <div class="login-card">
+      <h1>协作台</h1>
+      <p class="login-sub">企业私有协作空间</p>
+      <div class="seg">
+        <button id="tabLogin" class="seg-btn active">登录</button>
+        <button id="tabReg" class="seg-btn">注册</button>
+      </div>
+
+      <!-- 登录 -->
+      <div id="loginForm">
+        <input id="liEmail" class="input" placeholder="邮箱" autocomplete="username" />
+        <input id="liPass" class="input" type="password" placeholder="密码" autocomplete="current-password" />
+        <button id="liSubmit" class="btn-primary">登录</button>
+      </div>
+
+      <!-- 注册 -->
+      <div id="regForm" class="hidden">
+        <input id="rgNick" class="input" placeholder="昵称（如：二郎）" />
+        <div class="hint" id="rgNickHint">昵称将自动变为「X包」</div>
+        <input id="rgEmail" class="input" placeholder="邮箱" autocomplete="username" />
+        <input id="rgInvite" class="input" placeholder="邀请码（向管理员索取）" />
+        <input id="rgPass" class="input" type="password" placeholder="密码（至少6位）" autocomplete="new-password" />
+        <input id="rgConfirm" class="input" type="password" placeholder="确认密码" autocomplete="new-password" />
+        <button id="rgSubmit" class="btn-primary">注册并登录</button>
+      </div>
+
+      <p id="liMsg" class="msg"></p>
+    </div>
+  </div>
+
+  <!-- 应用 -->
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="side-head">
+        <span class="logo">◆ 协作台</span>
+        <button id="adminBtn" class="btn-ghost hidden">🛡 管理</button>
+      </div>
+      <button id="newTask" class="btn-new">+ 新建任务</button>
+      <div id="roomList" class="room-list"></div>
+      <div class="side-foot">
+        <span id="meName" class="me-name"></span>
+        <button id="logout" class="btn-ghost">退出</button>
+      </div>
+    </aside>
+
+    <div class="grid">
+      <!-- 面板1：AI任务区 -->
+      <section class="panel panel-chat">
+        <header class="panel-head">
+          <span class="panel-ico">🤖</span>
+          <span class="panel-name">AI任务区</span>
+          <span id="roomTitle" class="panel-sub">请选择左侧任务</span>
+          <div id="onlineDots" class="online-dots" title="在线人数"></div>
+          <button id="openTheme" class="btn-ghost panel-act">🎨 外观</button>
+        </header>
+        <div id="messages" class="messages">
+          <div class="empty">从左侧选择一个任务开始沟通</div>
+        </div>
+        <footer class="composer">
+          <div class="composer-tools">
+            <button id="addFile" class="tool-btn" title="发送图片">📎</button>
+            <select id="modelSel" class="model-sel" title="选择模型（演示）">
+              <option value="">🤖 选择模型</option>
+              <option>GPT-4o</option>
+              <option>GPT-4o mini</option>
+              <option>Claude 3.5 Sonnet</option>
+              <option>Gemini 1.5 Pro</option>
+              <option>Qwen2.5-Max</option>
+              <option>DeepSeek-V3</option>
+              <option>Llama 3.1 405B</option>
+              <option>文心一言 4.0</option>
+              <option>智谱 GLM-4</option>
+              <option>讯飞星火 V4</option>
+            </select>
+            <button id="voiceBtn" class="tool-btn" title="语音输入">🎤</button>
+          </div>
+          <div id="imgChip" class="img-chip hidden"></div>
+          <div class="composer-row">
+            <textarea id="input" class="composer-input" placeholder="输入消息，Enter 发送 / Shift+Enter 换行" rows="1"></textarea>
+            <button id="send" class="btn-primary">发送</button>
+          </div>
+          <input id="fileInput" type="file" accept="image/*" hidden />
+        </footer>
+      </section>
+
+      <!-- 面板2：代办清单区 -->
+      <section class="panel panel-todo">
+        <header class="panel-head">
+          <span class="panel-ico">✅</span>
+          <span class="panel-name">代办清单</span>
+          <span id="todoScope" class="panel-sub"></span>
+        </header>
+        <div id="todoList" class="todo-list">
+          <div class="empty">请先选择左侧任务</div>
+        </div>
+        <footer class="panel-foot">
+          <input id="todoInput" class="input panel-input" placeholder="添加一项代办，回车保存" maxlength="500" />
+          <button id="todoAdd" class="btn-primary panel-add">添加</button>
+        </footer>
+      </section>
+
+      <!-- 面板3：备注区 -->
+      <section class="panel panel-notes">
+        <header class="panel-head">
+          <span class="panel-ico">📝</span>
+          <span class="panel-name">备注</span>
+          <span id="notesTip" class="panel-sub"></span>
+        </header>
+        <textarea id="notesArea" class="notes-area" placeholder="在此记录任务备注，自动保存…"></textarea>
+      </section>
+
+      <!-- 面板4：人员管理区（仅展示） -->
+      <section class="panel panel-people">
+        <header class="panel-head">
+          <span class="panel-ico">👥</span>
+          <span class="panel-name">人员管理</span>
+          <span class="panel-sub">成员总览 · 仅展示</span>
+        </header>
+        <div id="memberList" class="member-list">
+          <div class="empty">加载中…</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- 新建任务弹窗 -->
+  <div id="taskModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3>新建任务</h3><button id="closeTask" class="btn-ghost">✕</button></div>
+      <input id="taskName" class="input" placeholder="任务名，如：周五例会纪要" />
+      <button id="taskCreate" class="btn-primary">创建并进入</button>
+    </div>
+  </div>
+
+  <!-- 外观弹窗 -->
+  <div id="themeModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3>外观定制</h3><button id="closeTheme" class="btn-ghost">✕</button></div>
+      <p class="modal-label">配色模板</p>
+      <div id="themeSwatches" class="swatches"></div>
+      <p class="modal-label">背景图（来自图上传）</p>
+      <div class="bg-row">
+        <label class="btn-upload">上传图片<input id="bgFile" type="file" accept="image/*" hidden /></label>
+        <button id="bgRemove" class="btn-ghost">移除背景</button>
+      </div>
+      <div id="bgPreview" class="bg-preview hidden"></div>
+    </div>
+  </div>
+
+  <!-- 管理员：邀请码弹窗 -->
+  <div id="adminModal" class="modal hidden">
+    <div class="modal-card wide">
+      <div class="modal-head"><h3>邀请码管理</h3><button id="closeAdmin" class="btn-ghost">✕</button></div>
+      <button id="genInvite" class="btn-primary">+ 生成邀请码</button>
+      <div id="inviteList" class="invite-list"></div>
+    </div>
+  </div>
+
+  <script src="./config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "office-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "企业私有协作平台（AI对话式界面 + 任务协作室 + 界面可定制）",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

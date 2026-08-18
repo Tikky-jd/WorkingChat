@@ -320,7 +320,27 @@
             <span id="kbSaveState" class="kb-save-state"></span>
             <button id="kbDeleteDoc" class="btn-ghost hidden" data-act="delkbdoc">删除文档</button>
           </div>
-          <textarea id="kbContent" class="kb-content" placeholder="开始撰写文档内容…"></textarea>
+          <div class="kb-toolbar">
+            <button class="kb-fmt" data-fmt="bold" title="加粗"><b>B</b></button>
+            <button class="kb-fmt" data-fmt="italic" title="斜体"><i>I</i></button>
+            <button class="kb-fmt" data-fmt="h2" title="二级标题">H2</button>
+            <button class="kb-fmt" data-fmt="h3" title="三级标题">H3</button>
+            <button class="kb-fmt" data-fmt="ul" title="无序列表">• 列表</button>
+            <button class="kb-fmt" data-fmt="ol" title="有序列表">1. 列表</button>
+            <button class="kb-fmt" data-fmt="quote" title="引用">❝ 引用</button>
+            <button class="kb-fmt" data-fmt="code" title="行内代码">&lt;/&gt;</button>
+            <span class="kb-tool-sep"></span>
+            <button data-act="kbimg" title="插入图片">🖼 图片</button>
+            <button data-act="kbemoji" title="插入表情">😀</button>
+            <span class="kb-tool-sep"></span>
+            <label class="kb-preview-toggle"><input type="checkbox" id="kbPreviewMode" /> 预览</label>
+          </div>
+          <div id="kbEmojiPanel" class="kb-emoji-panel hidden"></div>
+          <div class="kb-edit-wrap">
+            <textarea id="kbContent" class="kb-content" placeholder="开始撰写文档内容…（支持 # 标题、**加粗**、*斜体*、- 列表、> 引用、![图片](链接)，或直接用上方工具栏）"></textarea>
+            <div id="kbPreview" class="kb-preview hidden"></div>
+          </div>
+          <input id="kbImgInput" type="file" accept="image/*" hidden />
         </div>
       </main>
     </div>

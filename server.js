@@ -169,9 +169,13 @@ function cleanOldMessages() {
   const before = messages.length;
   messages = messages.filter((m) => m.time >= cutoff);
   saveMessages();
-  // 清理未被引用的上传文件
+  // 清理未被引用的上传文件（含知识库文档中引用的图片）
   const used = new Set(messages.filter((m) => m.image).map((m) => m.image.replace('/uploads/', '')));
   used.add(theme.bgImage);
+  kb.docs.forEach((d) => {
+    const re = /!\[[^\]]*\]\((\/uploads\/[^)]+)\)/g;
+    let m; while ((m = re.exec(d.content || ''))) used.add(m[1].replace('/uploads/', ''));
+  });
   try {
     for (const f of fs.readdirSync(UPLOADS_DIR)) {
       if (!used.has(f)) { try { fs.unlinkSync(path.join(UPLOADS_DIR, f)); } catch {} }
@@ -501,6 +505,14 @@ async function requestHandler(req, res) {
           });
         }
         return sendJson(res, 200, { rooms: out, date: todayStr() });
+      }
+
+      // ---- 通用图片上传（知识库等富文本用）----
+      if (p === '/api/upload' && method === 'POST') {
+        if (!rateLimit('up:' + clientIp(req), 20, 60000)) return sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        try { const url = saveDataUrl(b.dataUrl, 'kb'); return sendJson(res, 200, { url }); }
+        catch (e) { return sendJson(res, 400, { error: e.message }); }
       }
 
       // ---- 团队知识库（Wiki：文件夹 + 文档 + 全文搜索）----

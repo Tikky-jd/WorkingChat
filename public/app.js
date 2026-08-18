@@ -424,9 +424,10 @@ window.goView = goView;
 
 // 全局事件委托：统一处理所有 data-act 动作（不用内联 onclick，兼容严格 CSP）
 document.addEventListener('click', (e) => {
-  const el = e.target.closest('[data-act]');
+  const el = e.target.closest('[data-act],[data-fmt]');
   if (!el) return;
   const act = el.dataset.act;
+  if (el.dataset.fmt) { applyFmt(el.dataset.fmt); return; }
   if (act === 'view') goView(el.dataset.view);
   else if (act === 'delmsg') delMessage(el.dataset.id);
   else if (act === 'delroom') delRoom(el.dataset.id);
@@ -437,6 +438,9 @@ document.addEventListener('click', (e) => {
   else if (act === 'vote') vote(el.dataset.vid, Number(el.dataset.idx));
   else if (act === 'delfolder') deleteKbFolder(el.dataset.id);
   else if (act === 'delkbdoc') deleteKbDoc();
+  else if (act === 'kbimg') $('#kbImgInput').click();
+  else if (act === 'kbemoji') show($('#kbEmojiPanel'), $('#kbEmojiPanel').classList.contains('hidden'));
+  else if (act === 'emoji') { insertAtCursor(el.dataset.e); show($('#kbEmojiPanel'), false); }
 });
 
 // ---------- 工作日报生成器 ----------
@@ -653,8 +657,110 @@ async function selectKbDoc(id) {
     $('#kbInfo').textContent = `创建：${kbNick(doc.createdBy)} · 更新：${fmtTime(doc.updatedAt)}`;
     $('#kbSaveState').textContent = '';
     show($('#kbDeleteDoc'), myRole === 'admin');
+    $('#kbPreviewMode').checked = false;
+    show($('#kbContent'), true);
+    show($('#kbPreview'), false);
+    $('#kbPreview').innerHTML = '';
   } catch (e) { alert(e.message); }
 }
+
+// ---- 知识库富文本：Markdown 渲染（白名单，仅输出安全标签）----
+function mdInline(t) {
+  let s = escapeHtml(t);
+  s = s.replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+|\/uploads\/[^)\s]+)\)/g, '<img src="$2" alt="$1" />');
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/uploads\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  return s;
+}
+function renderMarkdown(src) {
+  const lines = String(src || '').split('\n');
+  const out = [];
+  let inCode = false, codeBuf = [], inUl = false, inOl = false;
+  const closeList = () => { if (inUl) { out.push('</ul>'); inUl = false; } if (inOl) { out.push('</ol>'); inOl = false; } };
+  for (const raw of lines) {
+    const t = raw.trim();
+    if (t.startsWith('```')) {
+      if (inCode) { out.push('<pre><code>' + escapeHtml(codeBuf.join('\n')) + '</code></pre>'); inCode = false; codeBuf = []; }
+      else { closeList(); inCode = true; }
+      continue;
+    }
+    if (inCode) { codeBuf.push(raw); continue; }
+    if (!t) { closeList(); out.push(''); continue; }
+    let m;
+    if ((m = t.match(/^(#{1,3})\s+(.*)/))) { closeList(); out.push(`<h${m[1].length}>${mdInline(m[2])}</h${m[1].length}>`); continue; }
+    if (/^(-{3,}|\*{3,})$/.test(t)) { closeList(); out.push('<hr/>'); continue; }
+    if (t.startsWith('- ') || t.startsWith('* ')) {
+      if (!inUl) { closeList(); out.push('<ul>'); inUl = true; }
+      out.push('<li>' + mdInline(t.slice(2)) + '</li>'); continue;
+    }
+    if ((m = t.match(/^\d+\.\s+(.*)/))) {
+      if (!inOl) { closeList(); out.push('<ol>'); inOl = true; }
+      out.push('<li>' + mdInline(m[1]) + '</li>'); continue;
+    }
+    if (t.startsWith('> ')) { closeList(); out.push('<blockquote>' + mdInline(t.slice(2)) + '</blockquote>'); continue; }
+    closeList();
+    out.push('<p>' + mdInline(t) + '</p>');
+  }
+  if (inCode) out.push('<pre><code>' + escapeHtml(codeBuf.join('\n')) + '</code></pre>');
+  closeList();
+  return out.join('\n');
+}
+function applyFmt(fmt) {
+  const ta = $('#kbContent');
+  const s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+  const sel = v.slice(s, e);
+  const ins = (before, after, ph) => {
+    const t = sel || ph;
+    ta.value = v.slice(0, s) + before + t + after + v.slice(e);
+    ta.focus();
+    const p = s + before.length;
+    ta.setSelectionRange(p, p + t.length);
+    scheduleKbSave();
+  };
+  if (fmt === 'bold') ins('**', '**', '加粗文字');
+  else if (fmt === 'italic') ins('*', '*', '斜体文字');
+  else if (fmt === 'h2') ins('\n## ', '', '二级标题');
+  else if (fmt === 'h3') ins('\n### ', '', '三级标题');
+  else if (fmt === 'ul') ins('\n- ', '', '列表项');
+  else if (fmt === 'ol') ins('\n1. ', '', '列表项');
+  else if (fmt === 'quote') ins('\n> ', '', '引用内容');
+  else if (fmt === 'code') ins('`', '`', '代码');
+}
+function insertAtCursor(text) {
+  const ta = $('#kbContent');
+  const s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+  ta.value = v.slice(0, s) + text + v.slice(e);
+  ta.focus();
+  const p = s + text.length;
+  ta.setSelectionRange(p, p);
+  scheduleKbSave();
+}
+$('#kbImgInput').onchange = (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { alert('仅支持图片'); return; }
+  if (file.size > 100 * 1024 * 1024) { alert('图片不能超过 100MB'); return; }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const { url } = await api('POST', '/api/upload', { dataUrl: reader.result });
+      insertAtCursor(`![图片](${url})\n`);
+      flash('图片已插入，预览模式可查看');
+    } catch (err) { alert(err.message); }
+  };
+  reader.readAsDataURL(file);
+};
+const KB_EMOJI = ['😀','😂','🤣','😅','😊','🙃','😉','😍','🤔','😴','🤤','🥱','😭','😡','🤯','🥳','🤫','🙄','😎','😜','👍','👏','🙏','💪','🔥','💯','🍔','🍕','🥤','☕','🍺','🍉','🐟','🦑','🐸','🐷','🦄','💻','📱','🎮','🎧','🎵','📺','🎬','⚽','🏀','🌚','🌝','💤','🙈','🙉','🙊','✨','🎉','❓','❗'];
+$('#kbEmojiPanel').innerHTML = KB_EMOJI.map((ch) => `<button class="kb-emoji" data-act="emoji" data-e="${ch}">${ch}</button>`).join('');
+$('#kbPreviewMode').onchange = (e2) => {
+  const on = e2.target.checked;
+  show($('#kbContent'), !on);
+  show($('#kbPreview'), on);
+  if (on) $('#kbPreview').innerHTML = renderMarkdown($('#kbContent').value);
+};
 function scheduleKbSave() {
   if (!kbCurrent) return;
   $('#kbSaveState').textContent = '编辑中…';

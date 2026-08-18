@@ -170,10 +170,10 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 /* 四宫格主区 */
 .grid { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr 1fr; gap: 12px; padding: 14px; overflow: auto; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; box-shadow: var(--shadow); }
-.panel-chat { grid-column: 1; grid-row: 1; }
-.panel-todo { grid-column: 2; grid-row: 1; }
-.panel-notes { grid-column: 1; grid-row: 2; }
-.panel-people { grid-column: 2; grid-row: 2; }
+.panel-chat { grid-column: 1; grid-row: 2; }
+.panel-todo { grid-column: 2; grid-row: 2; }
+.panel-notes { grid-column: 1; grid-row: 3; }
+.panel-people { grid-column: 2; grid-row: 3; }
 .panel-head { padding: 11px 16px; border-bottom: 1px solid var(--border); background: var(--panel); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .panel-ico { font-size: 15px; }
 .panel-name { font-weight: 600; font-size: 14.5px; }
@@ -325,7 +325,33 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .vote-opts .vote-opt-input { margin-bottom: 8px; }
 .modal-foot { margin-top: 18px; }
 
-/* ---------- 匿名树洞 ---------- */
+/* ---------- 团队知识库 ---------- */
+.kb-body { flex: 1; display: flex; gap: 14px; min-height: 0; padding: 18px 22px; }
+.kb-search { width: 220px; margin-bottom: 0; }
+.kb-tree { width: 280px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.kb-tree-list { display: flex; flex-direction: column; gap: 8px; }
+.kb-folder { display: flex; flex-direction: column; gap: 4px; }
+.kb-folder-head { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 6px 8px; border-radius: 8px; background: var(--bg); }
+.kb-folder-head b { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-folder-docs { display: flex; flex-direction: column; gap: 2px; }
+.kb-root { display: flex; flex-direction: column; gap: 2px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.kb-doc { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.kb-doc:hover { background: var(--panel-2); }
+.kb-doc.active { background: var(--primary); color: #fff; }
+.kb-doc-t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-doc-time { font-size: 11px; opacity: .7; flex-shrink: 0; }
+.kb-del { width: 18px; height: 18px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 50%; font-size: 11px; flex-shrink: 0; }
+.kb-del:hover { background: rgba(0, 0, 0, .1); color: #d33; }
+.kb-editor { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); overflow: hidden; }
+.kb-empty { margin: auto; color: var(--muted); font-size: 13.5px; }
+.kb-edit { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.kb-title { border: 0; outline: none; font-size: 19px; font-weight: 500; padding: 16px 20px 6px; background: transparent; color: var(--text); }
+.kb-meta { display: flex; align-items: center; gap: 12px; padding: 0 20px 10px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.kb-save-state { color: var(--primary); }
+.kb-meta .btn-ghost { padding: 3px 10px; font-size: 12px; margin-left: auto; }
+.kb-content { flex: 1; border: 0; outline: none; resize: none; padding: 14px 20px; background: transparent; color: var(--text); font-size: 14px; line-height: 1.8; font-family: inherit; min-height: 0; }
+
+/* ---------- 意见反馈 ---------- */
 .moan-input { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }
 .moan-input textarea { width: 100%; min-height: 80px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); font-size: 13.5px; resize: vertical; box-sizing: border-box; font-family: inherit; }
 .moan-input .btn-primary { width: auto; align-self: flex-end; padding: 9px 22px; }

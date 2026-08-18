@@ -60,6 +60,7 @@ let notes = readJson(jf('notes.json'), []);        // { roomId, text, updatedAt 
 let stats = readJson(jf('stats.json'), { date: '', onlineSec: {}, lastTs: {} }); // 摸鱼指数：{ date, onlineSec:{email:秒}, lastTs:{email:ts} }
 let votes = readJson(jf('votes.json'), []);   // 团队投票 { id, title, options:[{text, votes:[email]}], by, createdAt, votedBy:[email] }
 let moans = readJson(jf('moans.json'), []);   // 匿名树洞 { id, text, time }（不记录作者，纯匿名）
+let kb = readJson(jf('kb.json'), { folders: [], docs: [] }); // 团队知识库 { folders:[{id,name,parent}], docs:[{id,folderId,title,content,createdBy,updatedBy,createdAt,updatedAt}] }
 // 启动时清理过期 token
 for (const k in sessions) if (sessions[k] && sessions[k].exp && sessions[k].exp < Date.now()) delete sessions[k];
 
@@ -74,6 +75,7 @@ function saveNotes() { writeJson(jf('notes.json'), notes); }
 function saveStats() { writeJson(jf('stats.json'), stats); }
 function saveVotes() { writeJson(jf('votes.json'), votes); }
 function saveMoans() { writeJson(jf('moans.json'), moans); }
+function saveKb() { writeJson(jf('kb.json'), kb); }
 
 // 今日日期（本地时区，YYYY-MM-DD）
 function todayStr() {
@@ -499,6 +501,67 @@ async function requestHandler(req, res) {
           });
         }
         return sendJson(res, 200, { rooms: out, date: todayStr() });
+      }
+
+      // ---- 团队知识库（Wiki：文件夹 + 文档 + 全文搜索）----
+      if (p === '/api/kb' && method === 'GET') {
+        return sendJson(res, 200, { kb: { folders: kb.folders, docs: kb.docs.map((d) => ({ id: d.id, folderId: d.folderId, title: d.title, createdBy: d.createdBy, updatedBy: d.updatedBy, createdAt: d.createdAt, updatedAt: d.updatedAt })) } });
+      }
+      if (p === '/api/kb/search' && method === 'GET') {
+        const q = (url.parse(req.url, true).query.q || '').trim().toLowerCase();
+        if (!q) return sendJson(res, 200, { results: [] });
+        const results = kb.docs.filter((d) => (d.title + ' ' + (d.content || '')).toLowerCase().includes(q))
+          .slice(0, 30)
+          .map((d) => ({ id: d.id, title: d.title, folderId: d.folderId, updatedAt: d.updatedAt }));
+        return sendJson(res, 200, { results });
+      }
+      if (p === '/api/kb/folders' && method === 'POST') {
+        if (!rateLimit('kb:' + clientIp(req), 30, 60000)) return sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        const name = (b.name || '').trim();
+        if (!name) return sendJson(res, 400, { error: '文件夹名不能为空' });
+        kb.folders.push({ id: crypto.randomUUID(), name, parent: b.parent || null });
+        saveKb();
+        return sendJson(res, 200, { ok: true });
+      }
+      const kbf = p.match(/^\/api\/kb\/folders\/([^/]+)$/);
+      if (kbf && method === 'DELETE') {
+        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
+        const fid = kbf[1];
+        if (!kb.folders.find((f) => f.id === fid)) return sendJson(res, 404, { error: '文件夹不存在' });
+        kb.folders = kb.folders.filter((f) => f.id !== fid);
+        kb.docs = kb.docs.filter((d) => d.folderId !== fid); // 级联删除文件夹下文档
+        saveKb();
+        return sendJson(res, 200, { ok: true });
+      }
+      if (p === '/api/kb/docs' && method === 'POST') {
+        if (!rateLimit('kb:' + clientIp(req), 30, 60000)) return sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        if (b.folderId && !kb.folders.find((f) => f.id === b.folderId)) return sendJson(res, 400, { error: '文件夹不存在' });
+        const title = (b.title || '').trim() || '未命名文档';
+        const doc = { id: crypto.randomUUID(), folderId: b.folderId || null, title, content: '', createdBy: me, updatedBy: me, createdAt: Date.now(), updatedAt: Date.now() };
+        kb.docs.push(doc); saveKb();
+        return sendJson(res, 200, { doc: { id: doc.id, title: doc.title, folderId: doc.folderId } });
+      }
+      const kbd = p.match(/^\/api\/kb\/docs\/([^/]+)$/);
+      if (kbd && method === 'GET') {
+        const doc = kb.docs.find((d) => d.id === kbd[1]);
+        if (!doc) return sendJson(res, 404, { error: '文档不存在' });
+        return sendJson(res, 200, { doc });
+      }
+      if (kbd && method === 'PUT') {
+        const doc = kb.docs.find((d) => d.id === kbd[1]);
+        if (!doc) return sendJson(res, 404, { error: '文档不存在' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        if (b.title !== undefined) { const t = String(b.title).trim(); if (!t) return sendJson(res, 400, { error: '标题不能为空' }); doc.title = t.slice(0, 200); }
+        if (b.content !== undefined) { if (String(b.content).length > 100000) return sendJson(res, 400, { error: '内容过长' }); doc.content = String(b.content); }
+        doc.updatedBy = me; doc.updatedAt = Date.now(); saveKb();
+        return sendJson(res, 200, { ok: true });
+      }
+      if (kbd && method === 'DELETE') {
+        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
+        kb.docs = kb.docs.filter((d) => d.id !== kbd[1]); saveKb();
+        return sendJson(res, 200, { ok: true });
       }
 
       // ---- 代办清单（按任务）----

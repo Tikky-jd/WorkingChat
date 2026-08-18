@@ -164,9 +164,10 @@
     <div class="grid">
       <!-- 功能入口 -->
       <div class="feature-bar">
-        <button class="feat-card" onclick="goView('daily')"><span class="feat-ico">📋</span><b>工作日报</b><i>一键生成今日总结</i></button>
-        <button class="feat-card" onclick="goView('vote')"><span class="feat-ico">🗳</span><b>团队投票</b><i>内部投票 · 结果实时</i></button>
-        <button class="feat-card" onclick="goView('moan')"><span class="feat-ico">🌳</span><b>匿名树洞</b><i>员工心声 · 完全匿名</i></button>
+        <button class="feat-card" data-act="view" data-view="daily"><span class="feat-ico">📋</span><b>工作日报</b><i>一键生成今日总结</i></button>
+        <button class="feat-card" data-act="view" data-view="vote"><span class="feat-ico">🗳</span><b>团队投票</b><i>内部投票 · 结果实时</i></button>
+        <button class="feat-card" data-act="view" data-view="moan"><span class="feat-ico">📨</span><b>意见反馈</b><i>员工心声 · 匿名提交</i></button>
+        <button class="feat-card" data-act="view" data-view="kb"><span class="feat-ico">📚</span><b>团队知识库</b><i>知识沉淀 · 全员协作</i></button>
       </div>
 
       <!-- 面板1：AI任务区 -->
@@ -251,7 +252,7 @@
   <!-- 页面：工作日报生成器 -->
   <section id="page-daily" class="page hidden">
     <header class="page-head">
-      <button class="btn-ghost" onclick="goView('main')">← 返回工作台</button>
+      <button class="btn-ghost" data-act="view" data-view="main">← 返回工作台</button>
       <h2>工作日报</h2>
       <span class="page-sub">勾选今日任务 → 一键生成日报 → 复制发群</span>
     </header>
@@ -270,7 +271,7 @@
   <!-- 页面：团队投票 -->
   <section id="page-vote" class="page hidden">
     <header class="page-head">
-      <button class="btn-ghost" onclick="goView('main')">← 返回工作台</button>
+      <button class="btn-ghost" data-act="view" data-view="main">← 返回工作台</button>
       <h2>团队投票</h2>
       <span class="page-sub">内部投票 · 每人一票 · 结果实时可见</span>
       <button id="voteNew" class="btn-new">🗳 发起投票</button>
@@ -280,19 +281,48 @@
     </div>
   </section>
 
-  <!-- 页面：匿名树洞 -->
+  <!-- 页面：意见反馈 -->
   <section id="page-moan" class="page hidden">
     <header class="page-head">
-      <button class="btn-ghost" onclick="goView('main')">← 返回工作台</button>
-      <h2>匿名树洞</h2>
-      <span class="page-sub">员工心声 · 完全匿名 · 仅内部可见</span>
+      <button class="btn-ghost" data-act="view" data-view="main">← 返回工作台</button>
+      <h2>意见反馈</h2>
+      <span class="page-sub">员工心声 · 匿名提交 · 仅内部可见</span>
     </header>
     <div class="page-body">
       <div class="moan-input">
-        <textarea id="moanText" placeholder="想说点什么？这里完全匿名，不记录身份…" maxlength="2000"></textarea>
-        <button id="moanSend" class="btn-primary">匿名发布</button>
+        <textarea id="moanText" placeholder="欢迎提交你的建议或想法（匿名提交，不记录身份）" maxlength="2000"></textarea>
+        <button id="moanSend" class="btn-primary">提交反馈</button>
       </div>
       <div id="moanList" class="moan-list"><div class="empty">暂无内容</div></div>
+    </div>
+  </section>
+
+  <!-- 页面：团队知识库 -->
+  <section id="page-kb" class="page hidden">
+    <header class="page-head">
+      <button class="btn-ghost" data-act="view" data-view="main">← 返回工作台</button>
+      <h2>团队知识库</h2>
+      <span class="page-sub">知识沉淀 · 全员协作编辑</span>
+      <input id="kbSearch" class="input kb-search" placeholder="搜索文档…" />
+      <button id="kbNewDoc" class="btn-new">📄 新建文档</button>
+      <button id="kbNewFolder" class="btn-ghost">📁 新建文件夹</button>
+    </header>
+    <div class="kb-body">
+      <aside class="kb-tree">
+        <div id="kbTree" class="kb-tree-list"><div class="empty">加载中…</div></div>
+      </aside>
+      <main class="kb-editor">
+        <div id="kbEmpty" class="kb-empty">从左侧选择一篇文档，或点「新建文档」开始撰写</div>
+        <div id="kbEdit" class="kb-edit hidden">
+          <input id="kbTitle" class="kb-title" placeholder="文档标题" maxlength="200" />
+          <div class="kb-meta">
+            <span id="kbInfo">—</span>
+            <span id="kbSaveState" class="kb-save-state"></span>
+            <button id="kbDeleteDoc" class="btn-ghost hidden" data-act="delkbdoc">删除文档</button>
+          </div>
+          <textarea id="kbContent" class="kb-content" placeholder="开始撰写文档内容…"></textarea>
+        </div>
+      </main>
     </div>
   </section>
 

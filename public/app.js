@@ -105,7 +105,7 @@ function renderRooms() {
   rooms.forEach((r, i) => {
     const div = document.createElement('div');
     div.className = 'room-item' + (r.id === currentRoomId ? ' active' : '');
-    const delBtn = myRole === 'admin' ? `<button class="room-del" title="删除此任务（含其下所有内容）" onclick="delRoom('${r.id}')">✕</button>` : '';
+    const delBtn = myRole === 'admin' ? `<button class="room-del" title="删除此任务（含其下所有内容）" data-act="delroom" data-id="${r.id}">✕</button>` : '';
     div.innerHTML = `<span class="room-idx">任务${i + 1}</span><span class="room-name">${escapeHtml(r.name)}</span>${delBtn}`;
     div.onclick = () => selectRoom(r.id);
     box.appendChild(div);
@@ -160,9 +160,9 @@ function renderMessages(list) {
     const row = document.createElement('div');
     row.className = 'msg-row ' + (m.user === me ? 'me' : 'other');
     let inner = '';
-    if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" onclick="window.open('${BASE + m.image}')" />`;
+    if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" data-act="openimg" data-src="${BASE + m.image}" />`;
     if (m.text) inner += `<div class="text">${escapeHtml(m.text)}</div>`;
-    const delBtn = myRole === 'admin' ? `<button class="msg-del" title="删除此消息" onclick="delMessage('${m.id}')">✕</button>` : '';
+    const delBtn = myRole === 'admin' ? `<button class="msg-del" title="删除此消息" data-act="delmsg" data-id="${m.id}">✕</button>` : '';
     row.innerHTML = `<div class="bubble"><div class="meta"><span class="who">${escapeHtml(m.nickname)}</span><span class="time">${fmtTime(m.time)}</span>${delBtn}</div>${inner}</div>`;
     box.appendChild(row);
   });
@@ -208,7 +208,7 @@ $('#fileInput').onchange = (e) => {
 function renderImgChip() {
   const chip = $('#imgChip');
   if (!pendingImage) { show(chip, false); chip.innerHTML = ''; return; }
-  chip.innerHTML = `<img src="${pendingImage}" class="chip-img"/><button class="chip-x" onclick="clearPendingImage()">✕</button><span class="chip-tip">随发送一起发出</span>`;
+  chip.innerHTML = `<img src="${pendingImage}" class="chip-img"/><button class="chip-x" data-act="clearimg">✕</button><span class="chip-tip">随发送一起发出</span>`;
   show(chip, true);
 }
 function clearPendingImage() { pendingImage = null; renderImgChip(); }
@@ -412,13 +412,32 @@ function goView(name) {
   show($('#page-daily'), name === 'daily');
   show($('#page-vote'), name === 'vote');
   show($('#page-moan'), name === 'moan');
+  show($('#page-kb'), name === 'kb');
   if (name === 'main') startRoomLive();
   else stopRoomTimers();
   if (name === 'daily') loadDaily();
   if (name === 'vote') loadVotes();
   if (name === 'moan') loadMoans();
+  if (name === 'kb') loadKb();
 }
 window.goView = goView;
+
+// 全局事件委托：统一处理所有 data-act 动作（不用内联 onclick，兼容严格 CSP）
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act;
+  if (act === 'view') goView(el.dataset.view);
+  else if (act === 'delmsg') delMessage(el.dataset.id);
+  else if (act === 'delroom') delRoom(el.dataset.id);
+  else if (act === 'delvote') delVote(el.dataset.id);
+  else if (act === 'delmoan') delMoan(el.dataset.id);
+  else if (act === 'openimg') window.open(el.dataset.src);
+  else if (act === 'clearimg') clearPendingImage();
+  else if (act === 'vote') vote(el.dataset.vid, Number(el.dataset.idx));
+  else if (act === 'delfolder') deleteKbFolder(el.dataset.id);
+  else if (act === 'delkbdoc') deleteKbDoc();
+});
 
 // ---------- 工作日报生成器 ----------
 let dailyRooms = [];
@@ -497,20 +516,17 @@ function renderVotes(list) {
     const optsHtml = v.options.map((o, i) => {
       const pct = Math.round((o.count / total) * 100);
       const mine = v.mine && v.myChoice === i;
-      return `<div class="vote-opt${v.mine ? ' locked' : ''}" data-vid="${v.id}" data-idx="${i}">` +
+      return `<div class="vote-opt${v.mine ? ' locked' : ''}"${v.mine ? '' : ` data-act="vote" data-vid="${v.id}" data-idx="${i}"`}>` +
         `<div class="vote-opt-bar" style="width:${pct}%"></div>` +
         `<span class="vote-opt-txt">${escapeHtml(o.text)}${mine ? ' <em>✓ 我投的</em>' : ''}</span>` +
         `<span class="vote-opt-n">${o.count} 票 · ${pct}%</span></div>`;
     }).join('');
-    const delBtn = myRole === 'admin' ? `<button class="vote-del" onclick="delVote('${v.id}')">✕</button>` : '';
+    const delBtn = myRole === 'admin' ? `<button class="vote-del" data-act="delvote" data-id="${v.id}">✕</button>` : '';
     card.innerHTML =
       `<div class="vote-head"><b>${escapeHtml(v.title)}</b><span class="vote-total">共 ${sum} 票</span>${delBtn}</div>` +
       `<div class="vote-opts">${optsHtml}</div>` +
       (v.mine ? '<div class="vote-tip">已参与 · 结果实时更新</div>' : '<div class="vote-tip">点击选项参与投票（每人一票）</div>');
     box.appendChild(card);
-  });
-  document.querySelectorAll('.vote-opt:not(.locked)').forEach((el) => {
-    el.onclick = () => vote(el.dataset.vid, Number(el.dataset.idx));
   });
 }
 async function vote(vid, idx) {
@@ -546,7 +562,7 @@ $('#voteCreate').onclick = async () => {
   catch (e) { alert(e.message); }
 };
 
-// ---------- 匿名树洞 ----------
+// ---------- 意见反馈（匿名）----------
 async function loadMoans() {
   try {
     const { moans } = await api('GET', '/api/moans');
@@ -556,18 +572,18 @@ async function loadMoans() {
 function renderMoans(list) {
   const box = $('#moanList');
   box.innerHTML = '';
-  if (!list.length) { box.innerHTML = '<div class="empty">树洞还空着，来说点什么吧（完全匿名）</div>'; return; }
+  if (!list.length) { box.innerHTML = '<div class="empty">暂无反馈，欢迎匿名提交你的建议</div>'; return; }
   list.forEach((m) => {
     const div = document.createElement('div');
     div.className = 'moan-card';
-    const delBtn = myRole === 'admin' ? `<button class="moan-del" onclick="delMoan('${m.id}')">✕</button>` : '';
+    const delBtn = myRole === 'admin' ? `<button class="moan-del" data-act="delmoan" data-id="${m.id}">✕</button>` : '';
     div.innerHTML = `<div class="moan-body">${escapeHtml(m.text)}</div>` +
       `<div class="moan-foot"><span class="moan-time">匿名 · ${fmtTime(m.time)}</span>${delBtn}</div>`;
     box.appendChild(div);
   });
 }
 async function delMoan(id) {
-  if (!confirm('确定删除这条树洞？')) return;
+  if (!confirm('确定删除这条反馈？')) return;
   try { await api('DELETE', `/api/moans/${id}`); await loadMoans(); } catch (e) { alert(e.message); }
 }
 window.delMoan = delMoan;
@@ -577,6 +593,126 @@ $('#moanSend').onclick = async () => {
   try { await api('POST', '/api/moans', { text }); $('#moanText').value = ''; await loadMoans(); }
   catch (e) { alert(e.message); }
 };
+
+// ---------- 团队知识库 ----------
+let kbFolders = [], kbDocs = [], kbCurrent = null, kbSaveTimer = null, kbNameMap = {};
+const kbNick = (e) => kbNameMap[e] || e;
+async function loadKb() {
+  try {
+    const [kbd, mb] = await Promise.all([
+      api('GET', '/api/kb'),
+      api('GET', '/api/members').catch(() => ({ members: [] })),
+    ]);
+    kbFolders = kbd.kb.folders; kbDocs = kbd.kb.docs;
+    kbNameMap = Object.fromEntries(mb.members.map((m) => [m.email, m.nickname]));
+    if (kbCurrent && !kbDocs.find((d) => d.id === kbCurrent)) kbCurrent = null;
+    renderKbTree();
+    if (!kbCurrent) { show($('#kbEdit'), false); show($('#kbEmpty'), true); }
+  } catch (e) { $('#kbTree').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+}
+function renderKbTree() {
+  const box = $('#kbTree');
+  box.innerHTML = '';
+  const byFolder = new Map(kbFolders.map((f) => [f.id, []]));
+  kbDocs.forEach((d) => { if (d.folderId && byFolder.has(d.folderId)) byFolder.get(d.folderId).push(d); });
+  const docItem = (d) => {
+    const div = document.createElement('div');
+    div.className = 'kb-doc' + (kbCurrent === d.id ? ' active' : '');
+    div.innerHTML = `<span class="kb-doc-t">${escapeHtml(d.title)}</span><span class="kb-doc-time">${fmtTime(d.updatedAt)}</span>`;
+    div.onclick = () => selectKbDoc(d.id);
+    return div;
+  };
+  kbFolders.forEach((f) => {
+    const fdiv = document.createElement('div');
+    fdiv.className = 'kb-folder';
+    const del = myRole === 'admin' ? `<button class="kb-del" data-act="delfolder" data-id="${f.id}" title="删除文件夹（含其下文档）">✕</button>` : '';
+    fdiv.innerHTML = `<div class="kb-folder-head"><span>📁</span><b>${escapeHtml(f.name)}</b>${del}</div>`;
+    const list = document.createElement('div');
+    list.className = 'kb-folder-docs';
+    (byFolder.get(f.id) || []).forEach((d) => list.appendChild(docItem(d)));
+    fdiv.appendChild(list);
+    box.appendChild(fdiv);
+  });
+  const rootDocs = kbDocs.filter((d) => !d.folderId);
+  if (rootDocs.length) {
+    const rd = document.createElement('div');
+    rd.className = 'kb-root';
+    rootDocs.forEach((d) => rd.appendChild(docItem(d)));
+    box.appendChild(rd);
+  }
+  if (!kbFolders.length && !kbDocs.length) box.innerHTML = '<div class="empty">知识库还是空的，点「新建文档」开始沉淀</div>';
+}
+async function selectKbDoc(id) {
+  kbCurrent = id;
+  renderKbTree();
+  try {
+    const { doc } = await api('GET', `/api/kb/docs/${id}`);
+    show($('#kbEdit'), true); show($('#kbEmpty'), false);
+    $('#kbTitle').value = doc.title;
+    $('#kbContent').value = doc.content;
+    $('#kbInfo').textContent = `创建：${kbNick(doc.createdBy)} · 更新：${fmtTime(doc.updatedAt)}`;
+    $('#kbSaveState').textContent = '';
+    show($('#kbDeleteDoc'), myRole === 'admin');
+  } catch (e) { alert(e.message); }
+}
+function scheduleKbSave() {
+  if (!kbCurrent) return;
+  $('#kbSaveState').textContent = '编辑中…';
+  clearTimeout(kbSaveTimer);
+  kbSaveTimer = setTimeout(async () => {
+    try {
+      await api('PUT', `/api/kb/docs/${kbCurrent}`, { title: $('#kbTitle').value, content: $('#kbContent').value });
+      $('#kbSaveState').textContent = `已保存 ${new Date().toTimeString().slice(0, 5)}`;
+      const d = kbDocs.find((x) => x.id === kbCurrent);
+      if (d) { d.title = $('#kbTitle').value.trim(); d.updatedAt = Date.now(); renderKbTree(); }
+    } catch (e) { $('#kbSaveState').textContent = '保存失败'; }
+  }, 800);
+}
+$('#kbTitle').addEventListener('input', scheduleKbSave);
+$('#kbContent').addEventListener('input', scheduleKbSave);
+$('#kbNewDoc').onclick = async () => {
+  try { const { doc } = await api('POST', '/api/kb/docs', {}); await loadKb(); await selectKbDoc(doc.id); $('#kbTitle').focus(); }
+  catch (e) { alert(e.message); }
+};
+$('#kbNewFolder').onclick = async () => {
+  const name = prompt('文件夹名称：');
+  if (!name || !name.trim()) return;
+  try { await api('POST', '/api/kb/folders', { name: name.trim() }); await loadKb(); }
+  catch (e) { alert(e.message); }
+};
+async function deleteKbDoc() {
+  if (!kbCurrent || !confirm('确定删除这篇文档？')) return;
+  try { await api('DELETE', `/api/kb/docs/${kbCurrent}`); kbCurrent = null; await loadKb(); }
+  catch (e) { alert(e.message); }
+}
+async function deleteKbFolder(fid) {
+  if (!confirm('确定删除该文件夹？其下所有文档将一并删除！')) return;
+  try {
+    await api('DELETE', `/api/kb/folders/${fid}`);
+    if (kbCurrent) { kbCurrent = null; show($('#kbEdit'), false); show($('#kbEmpty'), true); }
+    await loadKb();
+  } catch (e) { alert(e.message); }
+}
+let kbSearchTimer = null;
+$('#kbSearch').addEventListener('input', (e) => {
+  clearTimeout(kbSearchTimer);
+  const q = e.target.value.trim();
+  kbSearchTimer = setTimeout(async () => {
+    if (!q) { await loadKb(); return; }
+    try {
+      const { results } = await api('GET', `/api/kb/search?q=${encodeURIComponent(q)}`);
+      const box = $('#kbTree'); box.innerHTML = '';
+      if (!results.length) { box.innerHTML = '<div class="empty">无匹配文档</div>'; return; }
+      results.forEach((d) => {
+        const div = document.createElement('div');
+        div.className = 'kb-doc' + (kbCurrent === d.id ? ' active' : '');
+        div.innerHTML = `<span class="kb-doc-t">${escapeHtml(d.title)}</span><span class="kb-doc-time">${fmtTime(d.updatedAt)}</span>`;
+        div.onclick = () => { $('#kbSearch').value = ''; selectKbDoc(d.id); };
+        box.appendChild(div);
+      });
+    } catch {}
+  }, 300);
+});
 
 // 轻提示
 function flash(msg) {

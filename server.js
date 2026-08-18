@@ -199,7 +199,8 @@ function serveStatic(req, res) {
   const filePath = path.normalize(path.join(PUBLIC_DIR, p));
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end('forbidden'); return; }
   if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream' });
+    // 禁用缓存：前端频繁迭代，避免浏览器/代理缓存旧版本导致功能不一致
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
     fs.createReadStream(filePath).pipe(res); return;
   }
   if (p.startsWith('/uploads/')) {

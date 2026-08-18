@@ -630,7 +630,7 @@ function renderKbTree() {
   kbFolders.forEach((f) => {
     const fdiv = document.createElement('div');
     fdiv.className = 'kb-folder';
-    const del = myRole === 'admin' ? `<button class="kb-del" data-act="delfolder" data-id="${f.id}" title="删除文件夹（含其下文档）">✕</button>` : '';
+    const del = (myRole === 'admin' || f.createdBy === me) ? `<button class="kb-del" data-act="delfolder" data-id="${f.id}" title="删除文件夹（含其下文档）">✕</button>` : '';
     fdiv.innerHTML = `<div class="kb-folder-head"><span>📁</span><b>${escapeHtml(f.name)}</b>` +
       `<button class="kb-new-in" data-act="kbnewdoc" data-folder="${f.id}" title="在此文件夹新建文档">＋</button>${del}</div>`;
     const list = document.createElement('div');
@@ -658,7 +658,7 @@ async function selectKbDoc(id) {
     $('#kbContent').value = doc.content;
     $('#kbInfo').textContent = `创建：${kbNick(doc.createdBy)} · 更新：${fmtTime(doc.updatedAt)}`;
     $('#kbSaveState').textContent = '';
-    show($('#kbDeleteDoc'), myRole === 'admin');
+    show($('#kbDeleteDoc'), myRole === 'admin' || doc.createdBy === me);
     $('#kbPreviewMode').checked = false;
     show($('#kbContent'), true);
     show($('#kbPreview'), false);
@@ -804,7 +804,9 @@ async function deleteKbDoc() {
   catch (e) { alert(e.message); }
 }
 async function deleteKbFolder(fid) {
-  if (!confirm('确定删除该文件夹？其下所有文档将一并删除！')) return;
+  const isMine = kbFolders.find((f) => f.id === fid)?.createdBy === me;
+  const tip = isMine ? '（自己创建的文档将一并删除，他人文档会自动移回根目录）' : '（其下全部文档将被删除）';
+  if (!confirm(`确定删除该文件夹？${tip}`)) return;
   try {
     await api('DELETE', `/api/kb/folders/${fid}`);
     if (kbCurrent) { kbCurrent = null; show($('#kbEdit'), false); show($('#kbEmpty'), true); }

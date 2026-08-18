@@ -532,17 +532,29 @@ async function requestHandler(req, res) {
         const b = JSON.parse(await readBody(req) || '{}');
         const name = (b.name || '').trim();
         if (!name) return sendJson(res, 400, { error: '文件夹名不能为空' });
-        kb.folders.push({ id: crypto.randomUUID(), name, parent: b.parent || null });
+        kb.folders.push({ id: crypto.randomUUID(), name, parent: b.parent || null, createdBy: me });
         saveKb();
         return sendJson(res, 200, { ok: true });
       }
       const kbf = p.match(/^\/api\/kb\/folders\/([^/]+)$/);
       if (kbf && method === 'DELETE') {
-        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
         const fid = kbf[1];
-        if (!kb.folders.find((f) => f.id === fid)) return sendJson(res, 404, { error: '文件夹不存在' });
+        const folder = kb.folders.find((f) => f.id === fid);
+        if (!folder) return sendJson(res, 404, { error: '文件夹不存在' });
+        const isOwner = folder.createdBy === me;
+        if (!isAdmin(me) && !isOwner) return sendJson(res, 403, { error: '只能删除自己创建的文件夹' });
         kb.folders = kb.folders.filter((f) => f.id !== fid);
-        kb.docs = kb.docs.filter((d) => d.folderId !== fid); // 级联删除文件夹下文档
+        if (isAdmin(me)) {
+          // 管理员删除：级联清除其下全部文档
+          kb.docs = kb.docs.filter((d) => d.folderId !== fid);
+        } else {
+          // 作者删除：自己创建的文档一并删除，他人文档移回根目录（不误删）
+          kb.docs = kb.docs.map((d) => {
+            if (d.folderId !== fid) return d;
+            if (d.createdBy === me) return null;
+            d.folderId = null; return d;
+          }).filter(Boolean);
+        }
         saveKb();
         return sendJson(res, 200, { ok: true });
       }
@@ -575,7 +587,9 @@ async function requestHandler(req, res) {
         return sendJson(res, 200, { ok: true });
       }
       if (kbd && method === 'DELETE') {
-        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
+        const doc = kb.docs.find((d) => d.id === kbd[1]);
+        if (!doc) return sendJson(res, 404, { error: '文档不存在' });
+        if (!isAdmin(me) && doc.createdBy !== me) return sendJson(res, 403, { error: '只能删除自己创建的文档' });
         kb.docs = kb.docs.filter((d) => d.id !== kbd[1]); saveKb();
         return sendJson(res, 200, { ok: true });
       }

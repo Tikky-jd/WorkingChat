@@ -58,6 +58,8 @@ let sessions = readJson(jf('sessions.json'), {}); // token -> { email, exp }
 let todos = readJson(jf('todos.json'), []);        // { id, roomId, text, done, by, time }
 let notes = readJson(jf('notes.json'), []);        // { roomId, text, updatedAt }
 let stats = readJson(jf('stats.json'), { date: '', onlineSec: {}, lastTs: {} }); // 摸鱼指数：{ date, onlineSec:{email:秒}, lastTs:{email:ts} }
+let votes = readJson(jf('votes.json'), []);   // 团队投票 { id, title, options:[{text, votes:[email]}], by, createdAt, votedBy:[email] }
+let moans = readJson(jf('moans.json'), []);   // 匿名树洞 { id, text, time }（不记录作者，纯匿名）
 // 启动时清理过期 token
 for (const k in sessions) if (sessions[k] && sessions[k].exp && sessions[k].exp < Date.now()) delete sessions[k];
 
@@ -70,6 +72,8 @@ function saveSessions() { writeJson(jf('sessions.json'), sessions); }
 function saveTodos() { writeJson(jf('todos.json'), todos); }
 function saveNotes() { writeJson(jf('notes.json'), notes); }
 function saveStats() { writeJson(jf('stats.json'), stats); }
+function saveVotes() { writeJson(jf('votes.json'), votes); }
+function saveMoans() { writeJson(jf('moans.json'), moans); }
 
 // 今日日期（本地时区，YYYY-MM-DD）
 function todayStr() {
@@ -415,6 +419,85 @@ async function requestHandler(req, res) {
         });
         list.sort((a, b) => b.score - a.score);
         return sendJson(res, 200, { rank: list });
+      }
+
+      // ---- 团队投票 ----
+      if (p === '/api/votes' && method === 'GET') {
+        return sendJson(res, 200, { votes: votes.map((v) => {
+          const ci = v.votedBy.indexOf(me);
+          return { id: v.id, title: v.title, by: v.by, createdAt: v.createdAt, mine: ci >= 0, myChoice: ci,
+                   options: v.options.map((o) => ({ text: o.text, count: o.votes.length })) };
+        }).reverse() });
+      }
+      if (p === '/api/votes' && method === 'POST') {
+        if (!rateLimit('vote:' + clientIp(req), 10, 60000)) return sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        const title = (b.title || '').trim();
+        const opts = Array.isArray(b.options) ? b.options.map((o) => String(o).trim()).filter(Boolean) : [];
+        if (!title) return sendJson(res, 400, { error: '投票主题不能为空' });
+        if (opts.length < 2) return sendJson(res, 400, { error: '至少需要 2 个选项' });
+        if (opts.length > 10) return sendJson(res, 400, { error: '选项最多 10 个' });
+        const vote = { id: crypto.randomUUID(), title, options: opts.map((text) => ({ text, votes: [] })), by: me, createdAt: Date.now(), votedBy: [] };
+        votes.push(vote); saveVotes();
+        return sendJson(res, 200, { vote });
+      }
+      const vm = p.match(/^\/api\/votes\/([^/]+)\/vote$/);
+      if (vm && method === 'POST') {
+        const v = votes.find((x) => x.id === vm[1]);
+        if (!v) return sendJson(res, 404, { error: '投票不存在' });
+        if (v.votedBy.includes(me)) return sendJson(res, 400, { error: '你已经投过票了' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        const idx = Number(b.optionIndex);
+        if (!Number.isInteger(idx) || idx < 0 || idx >= v.options.length) return sendJson(res, 400, { error: '选项无效' });
+        v.options[idx].votes.push(me); v.votedBy.push(me); saveVotes();
+        return sendJson(res, 200, { ok: true });
+      }
+      const vd = p.match(/^\/api\/votes\/([^/]+)$/);
+      if (vd && method === 'DELETE') {
+        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
+        votes = votes.filter((x) => x.id !== vd[1]); saveVotes();
+        return sendJson(res, 200, { ok: true });
+      }
+
+      // ---- 匿名树洞（不记录作者，纯匿名）----
+      if (p === '/api/moans' && method === 'GET') return sendJson(res, 200, { moans: moans.slice().reverse() });
+      if (p === '/api/moans' && method === 'POST') {
+        if (!rateLimit('moan:' + clientIp(req), 5, 60000)) return sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        const text = (b.text || '').trim();
+        if (!text) return sendJson(res, 400, { error: '内容不能为空' });
+        if (text.length > 2000) return sendJson(res, 400, { error: '内容过长（最多2000字）' });
+        moans.push({ id: crypto.randomUUID(), text, time: Date.now() });
+        saveMoans();
+        return sendJson(res, 200, { ok: true });
+      }
+      const mnd = p.match(/^\/api\/moans\/([^/]+)$/);
+      if (mnd && method === 'DELETE') {
+        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
+        moans = moans.filter((x) => x.id !== mnd[1]); saveMoans();
+        return sendJson(res, 200, { ok: true });
+      }
+
+      // ---- 今日工作日报聚合（按任务分组今日消息）----
+      if (p === '/api/daily' && method === 'GET') {
+        const dayStart = new Date(todayStr() + 'T00:00:00').getTime();
+        const roomMap = new Map(rooms.map((r) => [r.id, r]));
+        const byRoom = new Map();
+        messages.forEach((m) => {
+          if (m.time < dayStart || !m.user) return;
+          if (!byRoom.has(m.roomId)) byRoom.set(m.roomId, []);
+          byRoom.get(m.roomId).push(m);
+        });
+        const out = [];
+        for (const [rid, ms] of byRoom) {
+          const room = roomMap.get(rid);
+          const people = [...new Set(ms.map((m) => m.nickname))];
+          out.push({
+            id: rid, name: room ? room.name : '(已删除任务)', count: ms.length, people,
+            snippets: ms.slice(-3).map((m) => (m.text || (m.image ? '[图片]' : ''))).filter(Boolean),
+          });
+        }
+        return sendJson(res, 200, { rooms: out, date: todayStr() });
       }
 
       // ---- 代办清单（按任务）----

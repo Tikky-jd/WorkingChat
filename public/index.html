@@ -162,6 +162,13 @@
     </aside>
 
     <div class="grid">
+      <!-- 功能入口 -->
+      <div class="feature-bar">
+        <button class="feat-card" onclick="goView('daily')"><span class="feat-ico">📋</span><b>工作日报</b><i>一键生成今日总结</i></button>
+        <button class="feat-card" onclick="goView('vote')"><span class="feat-ico">🗳</span><b>团队投票</b><i>内部投票 · 结果实时</i></button>
+        <button class="feat-card" onclick="goView('moan')"><span class="feat-ico">🌳</span><b>匿名树洞</b><i>员工心声 · 完全匿名</i></button>
+      </div>
+
       <!-- 面板1：AI任务区 -->
       <section class="panel panel-chat">
         <header class="panel-head">
@@ -241,12 +248,74 @@
     </div>
   </div>
 
+  <!-- 页面：工作日报生成器 -->
+  <section id="page-daily" class="page hidden">
+    <header class="page-head">
+      <button class="btn-ghost" onclick="goView('main')">← 返回工作台</button>
+      <h2>工作日报</h2>
+      <span class="page-sub">勾选今日任务 → 一键生成日报 → 复制发群</span>
+    </header>
+    <div class="page-body">
+      <div class="daily-toolbar">
+        <button id="dailyGen" class="btn-new">📋 生成日报</button>
+        <button id="dailyCopy" class="btn-ghost hidden">📄 复制到剪贴板</button>
+        <button id="dailySelAll" class="btn-ghost">全选</button>
+        <button id="dailyClear" class="btn-ghost hidden">清空</button>
+      </div>
+      <div id="dailyRooms" class="daily-rooms"><div class="empty">加载中…</div></div>
+      <textarea id="dailyOut" class="daily-out hidden" readonly placeholder="日报将在这里生成…"></textarea>
+    </div>
+  </section>
+
+  <!-- 页面：团队投票 -->
+  <section id="page-vote" class="page hidden">
+    <header class="page-head">
+      <button class="btn-ghost" onclick="goView('main')">← 返回工作台</button>
+      <h2>团队投票</h2>
+      <span class="page-sub">内部投票 · 每人一票 · 结果实时可见</span>
+      <button id="voteNew" class="btn-new">🗳 发起投票</button>
+    </header>
+    <div class="page-body">
+      <div id="voteList" class="vote-list"><div class="empty">加载中…</div></div>
+    </div>
+  </section>
+
+  <!-- 页面：匿名树洞 -->
+  <section id="page-moan" class="page hidden">
+    <header class="page-head">
+      <button class="btn-ghost" onclick="goView('main')">← 返回工作台</button>
+      <h2>匿名树洞</h2>
+      <span class="page-sub">员工心声 · 完全匿名 · 仅内部可见</span>
+    </header>
+    <div class="page-body">
+      <div class="moan-input">
+        <textarea id="moanText" placeholder="想说点什么？这里完全匿名，不记录身份…" maxlength="2000"></textarea>
+        <button id="moanSend" class="btn-primary">匿名发布</button>
+      </div>
+      <div id="moanList" class="moan-list"><div class="empty">暂无内容</div></div>
+    </div>
+  </section>
+
   <!-- 新建任务弹窗 -->
   <div id="taskModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head"><h3>新建任务</h3><button id="closeTask" class="btn-ghost">✕</button></div>
       <input id="taskName" class="input" placeholder="任务名，如：周五例会纪要" />
       <button id="taskCreate" class="btn-primary">创建并进入</button>
+    </div>
+  </div>
+
+  <!-- 发起投票弹窗 -->
+  <div id="voteModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3>发起投票</h3><button id="closeVote" class="btn-ghost">✕</button></div>
+      <input id="voteTitle" class="input" placeholder="投票主题，如：下周团建去哪？" maxlength="200" />
+      <p class="modal-label">选项（2~10 个）</p>
+      <div id="voteOpts" class="vote-opts"></div>
+      <button id="voteAddOpt" class="btn-ghost">+ 添加选项</button>
+      <div class="modal-foot">
+        <button id="voteCreate" class="btn-primary">发起投票</button>
+      </div>
     </div>
   </div>
 

@@ -405,6 +405,179 @@ $('#genInvite').onclick = async () => {
   catch (e) { alert(e.message); }
 };
 
+// ---------- 视图切换（主界面 ↔ 功能页面）----------
+function goView(name) {
+  const isMain = name === 'main';
+  show($('#app'), isMain);
+  show($('#page-daily'), name === 'daily');
+  show($('#page-vote'), name === 'vote');
+  show($('#page-moan'), name === 'moan');
+  if (name === 'main') startRoomLive();
+  else stopRoomTimers();
+  if (name === 'daily') loadDaily();
+  if (name === 'vote') loadVotes();
+  if (name === 'moan') loadMoans();
+}
+window.goView = goView;
+
+// ---------- 工作日报生成器 ----------
+let dailyRooms = [];
+async function loadDaily() {
+  try {
+    const d = await api('GET', '/api/daily');
+    dailyRooms = d.rooms;
+    renderDailyRooms();
+  } catch (e) { $('#dailyRooms').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+}
+function renderDailyRooms() {
+  const box = $('#dailyRooms');
+  box.innerHTML = '';
+  if (!dailyRooms.length) { box.innerHTML = '<div class="empty">今天还没有任务消息，先去 AI 任务区聊几句吧</div>'; return; }
+  dailyRooms.forEach((r) => {
+    const div = document.createElement('div');
+    div.className = 'daily-room';
+    div.innerHTML =
+      `<label class="daily-pick"><input type="checkbox" data-id="${r.id}" checked /><b>${escapeHtml(r.name)}</b></label>` +
+      `<span class="daily-meta">${r.count} 条 · 参与：${r.people.map(escapeHtml).join('、')}</span>` +
+      (r.snippets.length ? `<div class="daily-snips">${r.snippets.map((s) => `<i>${escapeHtml(s)}</i>`).join('')}</div>` : '');
+    box.appendChild(div);
+  });
+}
+function selectedDailyRooms() {
+  const ids = new Set([...document.querySelectorAll('#dailyRooms input[type=checkbox]:checked')].map((c) => c.dataset.id));
+  return dailyRooms.filter((r) => ids.has(r.id));
+}
+$('#dailyGen').onclick = () => {
+  const sel = selectedDailyRooms();
+  if (!sel.length) { flash('请先勾选至少一个任务'); return; }
+  const lines = sel.map((r, i) =>
+    `■ ${i + 1}. ${r.name}：今日推进 ${r.count} 条沟通` +
+    (r.people.length ? `（参与：${r.people.join('、')}）` : '') +
+    (r.snippets.length ? `\n   · ${r.snippets.join('\n   · ')}` : '')
+  );
+  const d = new Date();
+  const out =
+`【工作日报】${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}
+${lines.join('\n')}
+---
+今日推进 ${sel.length} 项任务，累计沟通 ${sel.reduce((a, r) => a + r.count, 0)} 条。`;
+  $('#dailyOut').value = out;
+  show($('#dailyOut'), true);
+  show($('#dailyCopy'), true);
+  show($('#dailyClear'), true);
+};
+$('#dailyCopy').onclick = async () => {
+  const ta = $('#dailyOut');
+  try { await navigator.clipboard.writeText(ta.value); flash('日报已复制，去群里粘贴吧'); }
+  catch {
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); flash('已复制（兼容模式）'); } catch { alert('复制失败，请手动 Ctrl+C'); }
+  }
+};
+$('#dailySelAll').onclick = () => document.querySelectorAll('#dailyRooms input[type=checkbox]').forEach((c) => { c.checked = true; });
+$('#dailyClear').onclick = () => { $('#dailyOut').value = ''; show($('#dailyOut'), false); show($('#dailyCopy'), false); show($('#dailyClear'), false); };
+
+// ---------- 团队投票 ----------
+let voteOptCount = 2;
+async function loadVotes() {
+  try {
+    const { votes } = await api('GET', '/api/votes');
+    renderVotes(votes);
+  } catch (e) { $('#voteList').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+}
+function renderVotes(list) {
+  const box = $('#voteList');
+  box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<div class="empty">还没有投票，点右上角「发起投票」建一个</div>'; return; }
+  list.forEach((v) => {
+    const card = document.createElement('div');
+    card.className = 'vote-card';
+    const sum = v.options.reduce((a, o) => a + o.count, 0);
+    const total = sum || 1;
+    const optsHtml = v.options.map((o, i) => {
+      const pct = Math.round((o.count / total) * 100);
+      const mine = v.mine && v.myChoice === i;
+      return `<div class="vote-opt${v.mine ? ' locked' : ''}" data-vid="${v.id}" data-idx="${i}">` +
+        `<div class="vote-opt-bar" style="width:${pct}%"></div>` +
+        `<span class="vote-opt-txt">${escapeHtml(o.text)}${mine ? ' <em>✓ 我投的</em>' : ''}</span>` +
+        `<span class="vote-opt-n">${o.count} 票 · ${pct}%</span></div>`;
+    }).join('');
+    const delBtn = myRole === 'admin' ? `<button class="vote-del" onclick="delVote('${v.id}')">✕</button>` : '';
+    card.innerHTML =
+      `<div class="vote-head"><b>${escapeHtml(v.title)}</b><span class="vote-total">共 ${sum} 票</span>${delBtn}</div>` +
+      `<div class="vote-opts">${optsHtml}</div>` +
+      (v.mine ? '<div class="vote-tip">已参与 · 结果实时更新</div>' : '<div class="vote-tip">点击选项参与投票（每人一票）</div>');
+    box.appendChild(card);
+  });
+  document.querySelectorAll('.vote-opt:not(.locked)').forEach((el) => {
+    el.onclick = () => vote(el.dataset.vid, Number(el.dataset.idx));
+  });
+}
+async function vote(vid, idx) {
+  try { await api('POST', `/api/votes/${vid}/vote`, { optionIndex: idx }); await loadVotes(); }
+  catch (e) { alert(e.message); }
+}
+async function delVote(vid) {
+  if (!confirm('确定删除该投票？')) return;
+  try { await api('DELETE', `/api/votes/${vid}`); await loadVotes(); } catch (e) { alert(e.message); }
+}
+window.delVote = delVote;
+
+$('#voteNew').onclick = () => { voteOptCount = 2; renderVoteOpts(); $('#voteTitle').value = ''; show($('#voteModal'), true); };
+$('#closeVote').onclick = () => show($('#voteModal'), false);
+$('#voteAddOpt').onclick = () => { if (voteOptCount >= 10) { flash('最多 10 个选项'); return; } voteOptCount++; renderVoteOpts(); };
+function renderVoteOpts() {
+  const box = $('#voteOpts');
+  box.innerHTML = '';
+  for (let i = 0; i < voteOptCount; i++) {
+    const input = document.createElement('input');
+    input.className = 'input vote-opt-input';
+    input.placeholder = `选项 ${i + 1}`;
+    input.maxLength = 200;
+    box.appendChild(input);
+  }
+}
+$('#voteCreate').onclick = async () => {
+  const title = $('#voteTitle').value.trim();
+  const options = [...document.querySelectorAll('#voteOpts .vote-opt-input')].map((i) => i.value.trim()).filter(Boolean);
+  if (!title) { alert('请填写投票主题'); return; }
+  if (options.length < 2) { alert('至少填写 2 个选项'); return; }
+  try { await api('POST', '/api/votes', { title, options }); show($('#voteModal'), false); await loadVotes(); }
+  catch (e) { alert(e.message); }
+};
+
+// ---------- 匿名树洞 ----------
+async function loadMoans() {
+  try {
+    const { moans } = await api('GET', '/api/moans');
+    renderMoans(moans);
+  } catch (e) { $('#moanList').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+}
+function renderMoans(list) {
+  const box = $('#moanList');
+  box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<div class="empty">树洞还空着，来说点什么吧（完全匿名）</div>'; return; }
+  list.forEach((m) => {
+    const div = document.createElement('div');
+    div.className = 'moan-card';
+    const delBtn = myRole === 'admin' ? `<button class="moan-del" onclick="delMoan('${m.id}')">✕</button>` : '';
+    div.innerHTML = `<div class="moan-body">${escapeHtml(m.text)}</div>` +
+      `<div class="moan-foot"><span class="moan-time">匿名 · ${fmtTime(m.time)}</span>${delBtn}</div>`;
+    box.appendChild(div);
+  });
+}
+async function delMoan(id) {
+  if (!confirm('确定删除这条树洞？')) return;
+  try { await api('DELETE', `/api/moans/${id}`); await loadMoans(); } catch (e) { alert(e.message); }
+}
+window.delMoan = delMoan;
+$('#moanSend').onclick = async () => {
+  const text = $('#moanText').value.trim();
+  if (!text) { flash('先写点什么再发'); return; }
+  try { await api('POST', '/api/moans', { text }); $('#moanText').value = ''; await loadMoans(); }
+  catch (e) { alert(e.message); }
+};
+
 // 轻提示
 function flash(msg) {
   const t = document.createElement('div'); t.className = 'flash'; t.textContent = msg;

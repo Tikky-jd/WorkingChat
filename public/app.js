@@ -82,7 +82,7 @@ async function enter() {
   show($('#adminBtn'), myRole === 'admin');
   await loadTheme();
   await loadRooms();
-  await loadMembers();
+  await loadRank();
 }
 
 // 首页「进入协作台」/ 导航登录 → 显示登录/注册
@@ -105,11 +105,22 @@ function renderRooms() {
   rooms.forEach((r, i) => {
     const div = document.createElement('div');
     div.className = 'room-item' + (r.id === currentRoomId ? ' active' : '');
-    div.innerHTML = `<span class="room-idx">任务${i + 1}</span><span class="room-name">${escapeHtml(r.name)}</span>`;
+    const delBtn = myRole === 'admin' ? `<button class="room-del" title="删除此任务（含其下所有内容）" onclick="delRoom('${r.id}')">✕</button>` : '';
+    div.innerHTML = `<span class="room-idx">任务${i + 1}</span><span class="room-name">${escapeHtml(r.name)}</span>${delBtn}`;
     div.onclick = () => selectRoom(r.id);
     box.appendChild(div);
   });
 }
+// 管理员删除任务（级联清理）
+async function delRoom(id) {
+  if (!confirm('确定删除该任务？其下所有消息/待办/备注将一并删除，不可恢复！')) return;
+  try {
+    await api('DELETE', `/api/rooms/${id}`);
+    if (currentRoomId === id) { currentRoomId = null; $('#roomTitle').textContent = '请选择左侧任务'; renderTodos([]); $('#notesArea').value = ''; }
+    await loadRooms();
+  } catch (e) { alert(e.message); }
+}
+window.delRoom = delRoom;
 $('#newTask').onclick = () => { $('#taskName').value = ''; show($('#taskModal'), true); $('#taskName').focus(); };
 $('#closeTask').onclick = () => show($('#taskModal'), false);
 $('#taskCreate').onclick = async () => {
@@ -151,11 +162,21 @@ function renderMessages(list) {
     let inner = '';
     if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" onclick="window.open('${BASE + m.image}')" />`;
     if (m.text) inner += `<div class="text">${escapeHtml(m.text)}</div>`;
-    row.innerHTML = `<div class="bubble"><div class="meta"><span class="who">${escapeHtml(m.nickname)}</span><span class="time">${fmtTime(m.time)}</span></div>${inner}</div>`;
+    const delBtn = myRole === 'admin' ? `<button class="msg-del" title="删除此消息" onclick="delMessage('${m.id}')">✕</button>` : '';
+    row.innerHTML = `<div class="bubble"><div class="meta"><span class="who">${escapeHtml(m.nickname)}</span><span class="time">${fmtTime(m.time)}</span>${delBtn}</div>${inner}</div>`;
     box.appendChild(row);
   });
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
+
+// 管理员删除消息
+async function delMessage(mid) {
+  if (!currentRoomId) return;
+  if (!confirm('确定删除这条消息吗？')) return;
+  try { await api('DELETE', `/api/rooms/${currentRoomId}/messages/${mid}`); await loadMessages(); }
+  catch (e) { alert(e.message); }
+}
+window.delMessage = delMessage;
 
 $('#send').onclick = sendMsg;
 $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
@@ -224,7 +245,7 @@ function startRoomLive() {
   presenceTimer = setInterval(() => {
     if (currentRoomId) {
       api('POST', '/api/presence', { roomId: currentRoomId }).then((d) => renderDots(d.online)).catch(() => {});
-      loadMembers().catch(() => {});
+      loadRank().catch(() => {});
     }
   }, 5000);
   // 立即上报一次
@@ -309,19 +330,27 @@ $('#notesArea').addEventListener('input', () => {
   }, 800);
 });
 
-// ---------- 人员管理（展示）----------
-async function loadMembers() {
-  try { const { members } = await api('GET', '/api/members'); renderMembers(members); }
+// ---------- 今日活跃榜（摸鱼指数，替代原成员展示）----------
+async function loadRank() {
+  try { const { rank } = await api('GET', '/api/rank'); renderRank(rank); }
   catch {}
 }
-function renderMembers(list) {
+function renderRank(list) {
   const box = $('#memberList');
   box.innerHTML = '';
-  list.forEach((m) => {
+  if (!list.length) { box.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  list.forEach((m, i) => {
     const row = document.createElement('div');
     row.className = 'member-item';
+    const mins = Math.floor(m.onlineSec / 60);
     const role = m.role === 'admin' ? '<span class="member-role">管理员</span>' : '';
-    row.innerHTML = `<span class="member-dot ${m.online ? 'on' : ''}"></span><span class="member-name">${escapeHtml(m.nickname)}</span>${role}<span class="member-email">${escapeHtml(m.email)}</span>`;
+    row.innerHTML =
+      `<span class="member-dot ${m.online ? 'on' : ''}"></span>` +
+      `<span class="rank-no">${i + 1}</span>` +
+      `<span class="rank-title t-${m.title}">${m.title}</span>` +
+      `<span class="member-name">${escapeHtml(m.nickname)}</span>${role}` +
+      `<span class="rank-score">${m.score}分</span>` +
+      `<span class="member-email">在线${mins}分 · 消息${m.msgs} · 完成${m.done}</span>`;
     box.appendChild(row);
   });
 }

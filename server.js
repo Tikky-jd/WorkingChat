@@ -57,6 +57,7 @@ let theme = readJson(jf('theme.json'), { bgImage: null, colorTheme: 'blue' });
 let sessions = readJson(jf('sessions.json'), {}); // token -> { email, exp }
 let todos = readJson(jf('todos.json'), []);        // { id, roomId, text, done, by, time }
 let notes = readJson(jf('notes.json'), []);        // { roomId, text, updatedAt }
+let stats = readJson(jf('stats.json'), { date: '', onlineSec: {}, lastTs: {} }); // 摸鱼指数：{ date, onlineSec:{email:秒}, lastTs:{email:ts} }
 // 启动时清理过期 token
 for (const k in sessions) if (sessions[k] && sessions[k].exp && sessions[k].exp < Date.now()) delete sessions[k];
 
@@ -68,6 +69,18 @@ function saveTheme() { writeJson(jf('theme.json'), theme); }
 function saveSessions() { writeJson(jf('sessions.json'), sessions); }
 function saveTodos() { writeJson(jf('todos.json'), todos); }
 function saveNotes() { writeJson(jf('notes.json'), notes); }
+function saveStats() { writeJson(jf('stats.json'), stats); }
+
+// 今日日期（本地时区，YYYY-MM-DD）
+function todayStr() {
+  const d = new Date(), p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+// 跨天则重置在线时长累计
+function ensureStatsDate() {
+  const t = todayStr();
+  if (stats.date !== t) { stats.date = t; stats.onlineSec = {}; stats.lastTs = {}; }
+}
 
 // 种子管理员（邮箱登录）。生产请用 ADMIN_PASS 环境变量覆盖默认弱口令。
 if (users.length === 0) {
@@ -159,6 +172,16 @@ function cleanOldMessages() {
     }
   } catch {}
   if (before !== messages.length) console.log(`[clean] 已清理 ${before - messages.length} 条过期消息`);
+}
+
+// 删除不再被任何消息引用的上传文件（管理员删消息/删任务时调用）
+function removeImageIfUnused(image) {
+  if (!image) return;
+  const fname = image.replace('/uploads/', '');
+  if (!fname || fname === image) return;
+  const stillUsed = messages.some((m) => m.image && m.image.replace('/uploads/', '') === fname);
+  if (stillUsed) return;
+  try { fs.unlinkSync(path.join(UPLOADS_DIR, fname)); } catch {}
 }
 cleanOldMessages();
 setInterval(cleanOldMessages, 24 * 3600 * 1000);
@@ -274,6 +297,21 @@ async function requestHandler(req, res) {
         rooms.push(room); saveRooms();
         return sendJson(res, 200, { room });
       }
+      // ---- 管理员删除任务（级联清理消息/待办/备注/图片）----
+      const rd = p.match(/^\/api\/rooms\/([^/]+)$/);
+      if (rd && method === 'DELETE') {
+        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
+        const rid = rd[1];
+        if (!rooms.find((r) => r.id === rid)) return sendJson(res, 404, { error: '任务不存在' });
+        const roomMsgs = messages.filter((x) => x.roomId === rid);
+        rooms = rooms.filter((r) => r.id !== rid); saveRooms();
+        messages = messages.filter((x) => x.roomId !== rid); saveMessages();
+        todos = todos.filter((x) => x.roomId !== rid); saveTodos();
+        notes = notes.filter((x) => x.roomId !== rid); saveNotes();
+        roomMsgs.forEach((msg) => removeImageIfUnused(msg.image));
+        for (const [email, st] of presence) if (st.roomId === rid) presence.delete(email);
+        return sendJson(res, 200, { ok: true });
+      }
       const m = p.match(/^\/api\/rooms\/([^/]+)\/messages$/);
       if (m && method === 'GET') {
         const list = messages.filter((x) => x.roomId === m[1]);
@@ -296,12 +334,34 @@ async function requestHandler(req, res) {
         messages.push(msg); saveMessages();
         return sendJson(res, 200, { message: msg });
       }
+      // ---- 管理员删除单条消息 ----
+      const md = p.match(/^\/api\/rooms\/([^/]+)\/messages\/([^/]+)$/);
+      if (md && method === 'DELETE') {
+        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
+        const idx = messages.findIndex((x) => x.id === md[2] && x.roomId === md[1]);
+        if (idx < 0) return sendJson(res, 404, { error: '消息不存在' });
+        const [removed] = messages.splice(idx, 1);
+        saveMessages();
+        removeImageIfUnused(removed.image);
+        return sendJson(res, 200, { ok: true });
+      }
       // ---- 在线状态（按房间）----
       if (p === '/api/presence' && method === 'POST') {
         const b = JSON.parse(await readBody(req) || '{}');
-        if (b.roomId) presence.set(me, { roomId: b.roomId, ts: Date.now() });
-        else presence.delete(me);
         const now = Date.now();
+        const prev = presence.get(me);
+        if (b.roomId) {
+          // 连续在线（上次心跳仍在同一房间且间隔 < 20s）→ 累计在线时长（摸鱼指数）
+          if (prev && prev.roomId === b.roomId && now - prev.ts < 20000) {
+            ensureStatsDate();
+            stats.onlineSec[me] = (stats.onlineSec[me] || 0) + (now - prev.ts);
+            stats.lastTs[me] = now;
+            saveStats();
+          }
+          presence.set(me, { roomId: b.roomId, ts: now });
+        } else {
+          presence.delete(me);
+        }
         const online = [];
         for (const [email, st] of presence) {
           if (st.roomId === b.roomId && now - st.ts < 15000) online.push({ email, nickname: nickOf(email) });
@@ -335,6 +395,26 @@ async function requestHandler(req, res) {
           return { nickname: u.nickname, email: u.email, role: u.role, online: !!(st && now - st.ts < 15000) };
         });
         return sendJson(res, 200, { members: list });
+      }
+
+      // ---- 今日活跃榜（摸鱼指数：在线时长 + 消息 + 完成待办 → 称号）----
+      if (p === '/api/rank' && method === 'GET') {
+        ensureStatsDate();
+        const now = Date.now();
+        const dayStart = new Date(todayStr() + 'T00:00:00').getTime();
+        const msgs = {}, dones = {};
+        messages.forEach((m) => { if (m.time >= dayStart && m.user) msgs[m.user] = (msgs[m.user] || 0) + 1; });
+        todos.forEach((t) => { if (t.done && t.by) dones[t.by] = (dones[t.by] || 0) + 1; });
+        const list = users.map((u) => {
+          const onlineSec = stats.onlineSec[u.email] || 0;
+          const ms = msgs[u.email] || 0, dn = dones[u.email] || 0;
+          const score = Math.round(onlineSec / 60) + ms * 30 + dn * 50;
+          const title = score >= 600 ? '总监' : score >= 300 ? '达人' : score >= 100 ? '干事' : '副总监';
+          const st = presence.get(u.email);
+          return { nickname: u.nickname, email: u.email, role: u.role, online: !!(st && now - st.ts < 15000), onlineSec, msgs: ms, done: dn, score, title };
+        });
+        list.sort((a, b) => b.score - a.score);
+        return sendJson(res, 200, { rank: list });
       }
 
       // ---- 代办清单（按任务）----

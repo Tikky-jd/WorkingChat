@@ -441,6 +441,7 @@ document.addEventListener('click', (e) => {
   else if (act === 'kbimg') $('#kbImgInput').click();
   else if (act === 'kbemoji') show($('#kbEmojiPanel'), $('#kbEmojiPanel').classList.contains('hidden'));
   else if (act === 'emoji') { insertAtCursor(el.dataset.e); show($('#kbEmojiPanel'), false); }
+  else if (act === 'kbnewdoc') newKbDoc(el.dataset.folder);
 });
 
 // ---------- 工作日报生成器 ----------
@@ -630,7 +631,8 @@ function renderKbTree() {
     const fdiv = document.createElement('div');
     fdiv.className = 'kb-folder';
     const del = myRole === 'admin' ? `<button class="kb-del" data-act="delfolder" data-id="${f.id}" title="删除文件夹（含其下文档）">✕</button>` : '';
-    fdiv.innerHTML = `<div class="kb-folder-head"><span>📁</span><b>${escapeHtml(f.name)}</b>${del}</div>`;
+    fdiv.innerHTML = `<div class="kb-folder-head"><span>📁</span><b>${escapeHtml(f.name)}</b>` +
+      `<button class="kb-new-in" data-act="kbnewdoc" data-folder="${f.id}" title="在此文件夹新建文档">＋</button>${del}</div>`;
     const list = document.createElement('div');
     list.className = 'kb-folder-docs';
     (byFolder.get(f.id) || []).forEach((d) => list.appendChild(docItem(d)));
@@ -661,8 +663,17 @@ async function selectKbDoc(id) {
     show($('#kbContent'), true);
     show($('#kbPreview'), false);
     $('#kbPreview').innerHTML = '';
+    const sel = $('#kbMoveFolder');
+    sel.innerHTML = '<option value="">根目录</option>' + kbFolders.map((f) => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
+    sel.value = doc.folderId || '';
   } catch (e) { alert(e.message); }
 }
+$('#kbMoveFolder').onchange = async (e2) => {
+  if (!kbCurrent) return;
+  const folderId = e2.target.value;
+  try { await api('PUT', `/api/kb/docs/${kbCurrent}`, { folderId }); await loadKb(); flash('已移动到' + (folderId ? '文件夹' : '根目录')); }
+  catch (e) { alert(e.message); }
+};
 
 // ---- 知识库富文本：Markdown 渲染（白名单，仅输出安全标签）----
 function mdInline(t) {
@@ -776,10 +787,11 @@ function scheduleKbSave() {
 }
 $('#kbTitle').addEventListener('input', scheduleKbSave);
 $('#kbContent').addEventListener('input', scheduleKbSave);
-$('#kbNewDoc').onclick = async () => {
-  try { const { doc } = await api('POST', '/api/kb/docs', {}); await loadKb(); await selectKbDoc(doc.id); $('#kbTitle').focus(); }
+async function newKbDoc(folderId) {
+  try { const { doc } = await api('POST', '/api/kb/docs', { folderId: folderId || null }); await loadKb(); await selectKbDoc(doc.id); $('#kbTitle').focus(); }
   catch (e) { alert(e.message); }
-};
+}
+$('#kbNewDoc').onclick = () => newKbDoc(null);
 $('#kbNewFolder').onclick = async () => {
   const name = prompt('文件夹名称：');
   if (!name || !name.trim()) return;

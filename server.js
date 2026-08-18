@@ -567,6 +567,10 @@ async function requestHandler(req, res) {
         const b = JSON.parse(await readBody(req) || '{}');
         if (b.title !== undefined) { const t = String(b.title).trim(); if (!t) return sendJson(res, 400, { error: '标题不能为空' }); doc.title = t.slice(0, 200); }
         if (b.content !== undefined) { if (String(b.content).length > 100000) return sendJson(res, 400, { error: '内容过长' }); doc.content = String(b.content); }
+        if (b.folderId !== undefined) {
+          if (b.folderId && !kb.folders.find((f) => f.id === b.folderId)) return sendJson(res, 400, { error: '文件夹不存在' });
+          doc.folderId = b.folderId || null;
+        }
         doc.updatedBy = me; doc.updatedAt = Date.now(); saveKb();
         return sendJson(res, 200, { ok: true });
       }

@@ -333,6 +333,10 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .kb-folder { display: flex; flex-direction: column; gap: 4px; }
 .kb-folder-head { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 6px 8px; border-radius: 8px; background: var(--bg); }
 .kb-folder-head b { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-new-in { width: 18px; height: 18px; border: none; background: transparent; color: var(--primary); cursor: pointer; border-radius: 50%; font-size: 13px; line-height: 1; flex-shrink: 0; }
+.kb-new-in:hover { background: color-mix(in srgb, var(--primary) 15%, transparent); }
+.kb-move { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.kb-folder-sel { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 12px; padding: 2px 4px; }
 .kb-folder-docs { display: flex; flex-direction: column; gap: 2px; }
 .kb-root { display: flex; flex-direction: column; gap: 2px; border-top: 1px dashed var(--border); padding-top: 8px; }
 .kb-doc { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }

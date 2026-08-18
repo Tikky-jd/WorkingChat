@@ -488,22 +488,21 @@ async function requestHandler(req, res) {
       // ---- 今日工作日报聚合（按任务分组今日消息）----
       if (p === '/api/daily' && method === 'GET') {
         const dayStart = new Date(todayStr() + 'T00:00:00').getTime();
-        const roomMap = new Map(rooms.map((r) => [r.id, r]));
         const byRoom = new Map();
         messages.forEach((m) => {
           if (m.time < dayStart || !m.user) return;
           if (!byRoom.has(m.roomId)) byRoom.set(m.roomId, []);
           byRoom.get(m.roomId).push(m);
         });
-        const out = [];
-        for (const [rid, ms] of byRoom) {
-          const room = roomMap.get(rid);
-          const people = [...new Set(ms.map((m) => m.nickname))];
-          out.push({
-            id: rid, name: room ? room.name : '(已删除任务)', count: ms.length, people,
+        // 返回全部任务（今日 0 条的也列出，便于日报勾选），有消息的带计数与摘要
+        const out = rooms.map((room) => {
+          const ms = byRoom.get(room.id) || [];
+          return {
+            id: room.id, name: room.name, count: ms.length,
+            people: [...new Set(ms.map((m) => m.nickname))],
             snippets: ms.slice(-3).map((m) => (m.text || (m.image ? '[图片]' : ''))).filter(Boolean),
-          });
-        }
+          };
+        });
         return sendJson(res, 200, { rooms: out, date: todayStr() });
       }
 

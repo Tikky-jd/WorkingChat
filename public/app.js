@@ -456,13 +456,17 @@ async function loadDaily() {
 function renderDailyRooms() {
   const box = $('#dailyRooms');
   box.innerHTML = '';
-  if (!dailyRooms.length) { box.innerHTML = '<div class="empty">今天还没有任务消息，先去 AI 任务区聊几句吧</div>'; return; }
+  if (!dailyRooms.length) { box.innerHTML = '<div class="empty">还没有任务，先去左侧「新建任务」建一个</div>'; return; }
   dailyRooms.forEach((r) => {
     const div = document.createElement('div');
     div.className = 'daily-room';
+    const meta = r.count > 0
+      ? `${r.count} 条 · 参与：${r.people.map(escapeHtml).join('、')}`
+      : '今日 0 条沟通';
     div.innerHTML =
-      `<label class="daily-pick"><input type="checkbox" data-id="${r.id}" checked /><b>${escapeHtml(r.name)}</b></label>` +
-      `<span class="daily-meta">${r.count} 条 · 参与：${r.people.map(escapeHtml).join('、')}</span>` +
+      `<label class="daily-pick"><input type="checkbox" data-id="${r.id}" checked /><b>${escapeHtml(r.name)}</b>` +
+      `<span class="daily-cnt">${r.count}</span></label>` +
+      `<span class="daily-meta">${meta}</span>` +
       (r.snippets.length ? `<div class="daily-snips">${r.snippets.map((s) => `<i>${escapeHtml(s)}</i>`).join('')}</div>` : '');
     box.appendChild(div);
   });
@@ -475,9 +479,10 @@ $('#dailyGen').onclick = () => {
   const sel = selectedDailyRooms();
   if (!sel.length) { flash('请先勾选至少一个任务'); return; }
   const lines = sel.map((r, i) =>
-    `■ ${i + 1}. ${r.name}：今日推进 ${r.count} 条沟通` +
-    (r.people.length ? `（参与：${r.people.join('、')}）` : '') +
-    (r.snippets.length ? `\n   · ${r.snippets.join('\n   · ')}` : '')
+    `■ ${i + 1}. ${r.name}：` + (r.count > 0
+      ? `今日推进 ${r.count} 条沟通` + (r.people.length ? `（参与：${r.people.join('、')}）` : '') +
+        (r.snippets.length ? `\n   · ${r.snippets.join('\n   · ')}` : '')
+      : '今日暂未推进沟通')
   );
   const d = new Date();
   const out =

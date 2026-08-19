@@ -67,6 +67,7 @@ $('#rgSubmit').onclick = async () => {
 
 $('#logout').onclick = async () => {
   stopTimers();
+  closeSSE();
   try { await api('POST', '/api/logout'); } catch {}
   localStorage.removeItem('oc_token');
   location.reload();
@@ -84,6 +85,7 @@ async function enter() {
   await loadTheme();
   await loadRooms();
   await loadRank();
+  connectSSE();
 }
 
 // 首页「进入协作台」/ 导航登录 → 显示登录/注册
@@ -278,6 +280,32 @@ if (SR) {
 } else {
   $('#voiceBtn').disabled = true; $('#voiceBtn').title = '当前浏览器不支持语音输入（建议 Chrome/Edge）';
 }
+
+// ---------- SSE 实时推送（消息秒达；轮询保留兜底）----------
+let sse = null;
+function connectSSE() {
+  const token = localStorage.getItem('oc_token');
+  if (!token || sse) return;
+  try {
+    sse = new EventSource(BASE + '/api/stream?token=' + encodeURIComponent(token));
+    sse.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        if (!d || !d.type) return;
+        if (d.type === 'message' && d.roomId === currentRoomId) loadMessages().catch(() => {});
+        else if (d.type === 'roomDeleted' && d.roomId === currentRoomId) {
+          currentRoomId = null;
+          $('#roomTitle').textContent = '请选择左侧任务';
+          renderTodos([]);
+          $('#notesArea').value = '';
+          loadRooms().catch(() => {});
+        }
+      } catch {}
+    };
+    // EventSource 断线自动重连，无需手动处理 error
+  } catch {}
+}
+function closeSSE() { if (sse) { sse.close(); sse = null; } }
 
 // ---------- 在线状态（按房间）+ 消息轮询 ----------
 function startRoomLive() {

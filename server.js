@@ -122,6 +122,17 @@ function nickOf(email) { const u = users.find((x) => x.email === email); return 
 // 在线状态：email -> {roomId, ts}
 const presence = new Map();
 
+// SSE 实时推送：email -> Set<res>（一个用户可多标签页）
+const sseClients = new Map();
+function pushRoomEvent(roomId, data) {
+  const payload = 'data: ' + JSON.stringify(data) + '\n\n';
+  const room = rooms.find((r) => r.id === roomId);
+  for (const [email, set] of sseClients) {
+    if (room && !canAccessRoom(room, email)) continue; // 加密任务只推给有权者
+    for (const res of set) { try { res.write(payload); } catch {} }
+  }
+}
+
 function currentUser(req) {
   const h = req.headers['authorization'] || '';
   const m = h.match(/^Bearer\s+(.+)$/i);
@@ -233,6 +244,32 @@ async function requestHandler(req, res) {
   if (method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   try {
     if (p.startsWith('/api/')) {
+      // ---- SSE 实时推送（EventSource 无法带 Header，token 走 query）----
+      if (p === '/api/stream' && method === 'GET') {
+        const q = url.parse(req.url, true).query;
+        const token = q.token || '';
+        const entry = sessions[token];
+        if (!entry || (entry.exp && entry.exp < Date.now())) { res.writeHead(401); res.end('unauthorized'); return; }
+        const email = entry.email;
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        res.write(': ok\n\n');
+        if (!sseClients.has(email)) sseClients.set(email, new Set());
+        sseClients.get(email).add(res);
+        const close = () => {
+          const set = sseClients.get(email);
+          if (set) { set.delete(res); if (!set.size) sseClients.delete(email); }
+        };
+        req.on('close', close);
+        res.on('close', close);
+        const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch {} }, 30000); // 30s 心跳保活
+        res.on('close', () => clearInterval(hb));
+        return;
+      }
       // ---- 注册 ----
       if (p === '/api/register' && method === 'POST') {
         if (process.env.DISABLE_REGISTER === '1') return sendJson(res, 403, { error: '注册已关闭' });
@@ -350,6 +387,7 @@ async function requestHandler(req, res) {
         notes = notes.filter((x) => x.roomId !== rid); saveNotes();
         roomMsgs.forEach((msg) => removeImageIfUnused(msg.image));
         for (const [email, st] of presence) if (st.roomId === rid) presence.delete(email);
+        pushRoomEvent(rid, { type: 'roomDeleted', roomId: rid });
         return sendJson(res, 200, { ok: true });
       }
       const m = p.match(/^\/api\/rooms\/([^/]+)\/messages$/);
@@ -375,6 +413,7 @@ async function requestHandler(req, res) {
           text: text || null, image, time: Date.now(),
         };
         messages.push(msg); saveMessages();
+        pushRoomEvent(roomId, { type: 'message', roomId });
         return sendJson(res, 200, { message: msg });
       }
       // ---- 管理员删除单条消息 ----
@@ -386,6 +425,7 @@ async function requestHandler(req, res) {
         const [removed] = messages.splice(idx, 1);
         saveMessages();
         removeImageIfUnused(removed.image);
+        pushRoomEvent(md[1], { type: 'message', roomId: md[1] });
         return sendJson(res, 200, { ok: true });
       }
       // ---- 在线状态（按房间）----

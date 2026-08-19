@@ -20,6 +20,7 @@ const THEMES = [
 let me = null, myRole = null, myNick = null;
 let rooms = [];
 let currentRoomId = null;
+let pendingRoomId = null;      // 待解锁的加密任务 id
 let pendingImage = null;      // 待发送图片 dataURL
 let pollTimer = null, presenceTimer = null;
 
@@ -106,7 +107,7 @@ function renderRooms() {
     const div = document.createElement('div');
     div.className = 'room-item' + (r.id === currentRoomId ? ' active' : '');
     const delBtn = myRole === 'admin' ? `<button class="room-del" title="删除此任务（含其下所有内容）" data-act="delroom" data-id="${r.id}">✕</button>` : '';
-    div.innerHTML = `<span class="room-idx">任务${i + 1}</span><span class="room-name">${escapeHtml(r.name)}</span>${delBtn}`;
+    div.innerHTML = `<span class="room-idx">任务${i + 1}</span><span class="room-name">${r.encrypted ? '🔒 ' : ''}${escapeHtml(r.name)}</span>${delBtn}`;
     div.onclick = () => selectRoom(r.id);
     box.appendChild(div);
   });
@@ -123,14 +124,54 @@ async function delRoom(id) {
 window.delRoom = delRoom;
 $('#newTask').onclick = () => { $('#taskName').value = ''; show($('#taskModal'), true); $('#taskName').focus(); };
 $('#closeTask').onclick = () => show($('#taskModal'), false);
+// 新建任务（公开/加密）
+document.querySelectorAll('input[name=taskVis]').forEach((r) => {
+  r.onchange = () => show($('#taskPass'), document.querySelector('input[name=taskVis]:checked').value === 'encrypted');
+});
 $('#taskCreate').onclick = async () => {
   const name = $('#taskName').value.trim();
   if (!name) return;
-  try { const { room } = await api('POST', '/api/rooms', { name }); show($('#taskModal'), false); await loadRooms(); selectRoom(room.id); }
-  catch (e) { alert(e.message); }
+  const vis = document.querySelector('input[name=taskVis]:checked').value;
+  const body = { name };
+  if (vis === 'encrypted') {
+    const pw = $('#taskPass').value;
+    if (!pw) { alert('加密任务需设置访问密码'); return; }
+    body.encrypted = true; body.password = pw;
+  }
+  try {
+    const { room } = await api('POST', '/api/rooms', body);
+    show($('#taskModal'), false); $('#taskPass').value = ''; document.querySelector('input[name=taskVis][value=public]').checked = true; show($('#taskPass'), false);
+    await loadRooms(); selectRoom(room.id);
+  } catch (e) { alert(e.message); }
 };
+// 解锁加密任务
+$('#unlockConfirm').onclick = async () => {
+  const id = pendingRoomId;
+  if (!id) return;
+  try {
+    await api('POST', `/api/rooms/${id}/unlock`, { password: $('#unlockPass').value });
+    localStorage.setItem('oc_unlocked:' + me + ':' + id, '1');
+    show($('#unlockModal'), false);
+    await loadRooms();
+    await enterRoom(id);
+  } catch (e) { alert(e.message); }
+};
+$('#closeUnlock').onclick = () => show($('#unlockModal'), false);
 
 async function selectRoom(id) {
+  const room = rooms.find((r) => r.id === id);
+  // 加密任务：管理员/创建者免密；其他成员需已解锁（localStorage 记录按邮箱区分）
+  if (room && room.encrypted && myRole !== 'admin' && room.createdBy !== me && !localStorage.getItem('oc_unlocked:' + me + ':' + id)) {
+    pendingRoomId = id;
+    $('#unlockTitle').textContent = `「${room.name}」已加密，请输入访问密码`;
+    $('#unlockPass').value = '';
+    show($('#unlockModal'), true);
+    $('#unlockPass').focus();
+    return;
+  }
+  await enterRoom(id);
+}
+async function enterRoom(id) {
   currentRoomId = id;
   const idx = rooms.findIndex((r) => r.id === id);
   const label = idx > -1 ? `任务${idx + 1}：${rooms[idx].name}` : '';
@@ -238,22 +279,27 @@ if (SR) {
   $('#voiceBtn').disabled = true; $('#voiceBtn').title = '当前浏览器不支持语音输入（建议 Chrome/Edge）';
 }
 
-// ---------- 在线状态（按房间）----------
+// ---------- 在线状态（按房间）+ 消息轮询 ----------
 function startRoomLive() {
   stopRoomTimers();
-  // 每 5 秒上报自己在该房间在线，并拉取在线名单 + 成员列表（人员面板实时刷新）
+  // 每 5 秒上报在线 + 拉在线名单；每 3 秒拉消息（半实时）
   presenceTimer = setInterval(() => {
     if (currentRoomId) {
       api('POST', '/api/presence', { roomId: currentRoomId }).then((d) => renderDots(d.online)).catch(() => {});
       loadRank().catch(() => {});
     }
   }, 5000);
-  // 立即上报一次
-  api('POST', '/api/presence', { roomId: currentRoomId }).then((d) => renderDots(d.online)).catch(() => {});
+  pollTimer = setInterval(() => { if (currentRoomId) loadMessages().catch(() => {}); }, 3000);
+  // 立即上报 + 立即拉一次
+  if (currentRoomId) {
+    api('POST', '/api/presence', { roomId: currentRoomId }).then((d) => renderDots(d.online)).catch(() => {});
+    loadMessages().catch(() => {});
+  }
   window.addEventListener('beforeunload', leavePresence);
 }
 function stopRoomTimers() {
   if (presenceTimer) clearInterval(presenceTimer);
+  if (pollTimer) clearInterval(pollTimer);
 }
 function leavePresence() { if (currentRoomId) api('POST', '/api/presence', { roomId: null }).catch(() => {}); }
 function renderDots(online) {
@@ -270,11 +316,8 @@ function renderDots(online) {
   box.title = '在线：' + online.map((o) => o.nickname).join('、');
 }
 
-// 全局轮询消息（半实时）
-function startTimers() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(() => { if (currentRoomId) loadMessages().catch(() => {}); }, 8000);
-}
+// 登录后启动房间实时（在线 + 消息轮询）
+function startTimers() { startRoomLive(); }
 function stopTimers() { stopRoomTimers(); if (pollTimer) clearInterval(pollTimer); window.removeEventListener('beforeunload', leavePresence); }
 
 // ---------- 代办清单 ----------
@@ -447,37 +490,23 @@ document.addEventListener('click', (e) => {
 // ---------- 工作日报生成器 ----------
 let dailyRooms = [];
 async function loadDaily() {
-  try {
-    const d = await api('GET', '/api/daily');
-    dailyRooms = d.rooms;
-    renderDailyRooms();
-  } catch (e) { $('#dailyRooms').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
-}
-function renderDailyRooms() {
-  const box = $('#dailyRooms');
-  box.innerHTML = '';
-  if (!dailyRooms.length) { box.innerHTML = '<div class="empty">还没有任务，先去左侧「新建任务」建一个</div>'; return; }
-  dailyRooms.forEach((r) => {
-    const div = document.createElement('div');
-    div.className = 'daily-room';
-    const meta = r.count > 0
-      ? `${r.count} 条 · 参与：${r.people.map(escapeHtml).join('、')}`
-      : '今日 0 条沟通';
-    div.innerHTML =
-      `<label class="daily-pick"><input type="checkbox" data-id="${r.id}" checked /><b>${escapeHtml(r.name)}</b>` +
-      `<span class="daily-cnt">${r.count}</span></label>` +
-      `<span class="daily-meta">${meta}</span>` +
-      (r.snippets.length ? `<div class="daily-snips">${r.snippets.map((s) => `<i>${escapeHtml(s)}</i>`).join('')}</div>` : '');
-    box.appendChild(div);
-  });
-}
-function selectedDailyRooms() {
-  const ids = new Set([...document.querySelectorAll('#dailyRooms input[type=checkbox]:checked')].map((c) => c.dataset.id));
-  return dailyRooms.filter((r) => ids.has(r.id));
+  try { const d = await api('GET', '/api/daily'); dailyRooms = d.rooms; }
+  catch (e) { dailyRooms = []; }
 }
 $('#dailyGen').onclick = () => {
-  const sel = selectedDailyRooms();
-  if (!sel.length) { flash('请先勾选至少一个任务'); return; }
+  if (!dailyRooms.length) { flash('还没有任何任务，先去左侧「新建任务」建一个'); return; }
+  $('#dailyPickList').innerHTML = dailyRooms.map((r) =>
+    `<label class="daily-pick"><input type="checkbox" data-id="${r.id}" checked /><b>${escapeHtml(r.name)}</b>` +
+    `<span class="daily-cnt">${r.count > 0 ? r.count + ' 条' : '0 条'}</span></label>`).join('');
+  show($('#dailyModal'), true);
+};
+$('#closeDaily').onclick = () => show($('#dailyModal'), false);
+$('#dailyPickAll').onclick = () => document.querySelectorAll('#dailyPickList input[type=checkbox]').forEach((c) => { c.checked = true; });
+$('#dailyPickNone').onclick = () => document.querySelectorAll('#dailyPickList input[type=checkbox]').forEach((c) => { c.checked = false; });
+$('#dailyPickOk').onclick = () => {
+  const ids = new Set([...document.querySelectorAll('#dailyPickList input[type=checkbox]:checked')].map((c) => c.dataset.id));
+  const sel = dailyRooms.filter((r) => ids.has(r.id));
+  if (!sel.length) { flash('请至少勾选一个任务'); return; }
   const lines = sel.map((r, i) =>
     `■ ${i + 1}. ${r.name}：` + (r.count > 0
       ? `今日推进 ${r.count} 条沟通` + (r.people.length ? `（参与：${r.people.join('、')}）` : '') +
@@ -494,6 +523,7 @@ ${lines.join('\n')}
   show($('#dailyOut'), true);
   show($('#dailyCopy'), true);
   show($('#dailyClear'), true);
+  show($('#dailyModal'), false);
 };
 $('#dailyCopy').onclick = async () => {
   const ta = $('#dailyOut');
@@ -503,7 +533,6 @@ $('#dailyCopy').onclick = async () => {
     try { document.execCommand('copy'); flash('已复制（兼容模式）'); } catch { alert('复制失败，请手动 Ctrl+C'); }
   }
 };
-$('#dailySelAll').onclick = () => document.querySelectorAll('#dailyRooms input[type=checkbox]').forEach((c) => { c.checked = true; });
 $('#dailyClear').onclick = () => { $('#dailyOut').value = ''; show($('#dailyOut'), false); show($('#dailyCopy'), false); show($('#dailyClear'), false); };
 
 // ---------- 团队投票 ----------

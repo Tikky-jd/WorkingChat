@@ -110,6 +110,13 @@ function toBaoNickname(raw) {
 
 function hashPassword(pw, salt) { return crypto.scryptSync(pw, salt, 64).toString('hex'); }
 function isAdmin(email) { const u = users.find((x) => x.email === email); return !!(u && u.role === 'admin'); }
+function sha256(s) { return crypto.createHash('sha256').update(String(s)).digest('hex'); }
+const unlocked = new Map(); // email -> Set(roomId) 加密任务解锁状态（内存态，重启后需重新解锁）
+function canAccessRoom(room, email) {
+  if (!room || !room.encrypted) return true;
+  if (isAdmin(email) || room.createdBy === email) return true;
+  return !!(unlocked.get(email) && unlocked.get(email).has(room.id));
+}
 function nickOf(email) { const u = users.find((x) => x.email === email); return u ? u.nickname : email; }
 
 // 在线状态：email -> {roomId, ts}
@@ -299,14 +306,36 @@ async function requestHandler(req, res) {
       }
 
       // ---- 任务室 ----
-      if (p === '/api/rooms' && method === 'GET') return sendJson(res, 200, { rooms });
+      if (p === '/api/rooms' && method === 'GET') {
+        return sendJson(res, 200, { rooms: rooms.map((r) => ({ id: r.id, name: r.name, createdBy: r.createdBy, createdAt: r.createdAt, encrypted: !!r.encrypted })) });
+      }
       if (p === '/api/rooms' && method === 'POST') {
         const b = JSON.parse(await readBody(req) || '{}');
         const name = (b.name || '').trim();
         if (!name) return sendJson(res, 400, { error: '任务名不能为空' });
-        const room = { id: crypto.randomUUID(), name, createdBy: me, createdAt: Date.now() };
+        const encrypted = !!b.encrypted;
+        let passwordHash = null;
+        if (encrypted) {
+          const pw = String(b.password || '');
+          if (!pw) return sendJson(res, 400, { error: '加密任务需设置访问密码' });
+          if (pw.length > 100) return sendJson(res, 400, { error: '密码过长（最多100位）' });
+          passwordHash = sha256(pw);
+        }
+        const room = { id: crypto.randomUUID(), name, createdBy: me, createdAt: Date.now(), encrypted, passwordHash };
         rooms.push(room); saveRooms();
-        return sendJson(res, 200, { room });
+        return sendJson(res, 200, { room: { id: room.id, name: room.name, createdBy: room.createdBy, createdAt: room.createdAt, encrypted: room.encrypted } });
+      }
+      // ---- 解锁加密任务 ----
+      const ul = p.match(/^\/api\/rooms\/([^/]+)\/unlock$/);
+      if (ul && method === 'POST') {
+        const room = rooms.find((r) => r.id === ul[1]);
+        if (!room) return sendJson(res, 404, { error: '任务不存在' });
+        if (!room.encrypted) return sendJson(res, 400, { error: '该任务未加密' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        if (sha256(String(b.password || '')) !== room.passwordHash) return sendJson(res, 403, { error: '密码错误' });
+        if (!unlocked.has(me)) unlocked.set(me, new Set());
+        unlocked.get(me).add(room.id);
+        return sendJson(res, 200, { ok: true });
       }
       // ---- 管理员删除任务（级联清理消息/待办/备注/图片）----
       const rd = p.match(/^\/api\/rooms\/([^/]+)$/);
@@ -325,12 +354,15 @@ async function requestHandler(req, res) {
       }
       const m = p.match(/^\/api\/rooms\/([^/]+)\/messages$/);
       if (m && method === 'GET') {
+        if (!canAccessRoom(rooms.find((r) => r.id === m[1]), me)) return sendJson(res, 403, { error: '该任务已加密，请输入密码' });
         const list = messages.filter((x) => x.roomId === m[1]);
         return sendJson(res, 200, { messages: list });
       }
       if (m && method === 'POST') {
         const roomId = m[1];
-        if (!rooms.find((r) => r.id === roomId)) return sendJson(res, 404, { error: '任务不存在' });
+        const room = rooms.find((r) => r.id === roomId);
+        if (!room) return sendJson(res, 404, { error: '任务不存在' });
+        if (!canAccessRoom(room, me)) return sendJson(res, 403, { error: '该任务已加密，请输入密码' });
         const b = JSON.parse(await readBody(req) || '{}');
         const text = (b.text || '').trim();
         if (text.length > MAX_TEXT) return sendJson(res, 400, { error: '消息文字过长' });
@@ -362,6 +394,8 @@ async function requestHandler(req, res) {
         const now = Date.now();
         const prev = presence.get(me);
         if (b.roomId) {
+          const room = rooms.find((r) => r.id === b.roomId);
+          if (room && !canAccessRoom(room, me)) return sendJson(res, 403, { error: '该任务已加密，请输入密码' });
           // 连续在线（上次心跳仍在同一房间且间隔 < 20s）→ 累计在线时长（摸鱼指数）
           if (prev && prev.roomId === b.roomId && now - prev.ts < 20000) {
             ensureStatsDate();
@@ -494,8 +528,8 @@ async function requestHandler(req, res) {
           if (!byRoom.has(m.roomId)) byRoom.set(m.roomId, []);
           byRoom.get(m.roomId).push(m);
         });
-        // 返回全部任务（今日 0 条的也列出，便于日报勾选），有消息的带计数与摘要
-        const out = rooms.map((room) => {
+        // 返回全部任务（今日 0 条的也列出，便于日报勾选），有消息的带计数与摘要；加密任务仅对有权者可见
+        const out = rooms.filter((room) => canAccessRoom(room, me)).map((room) => {
           const ms = byRoom.get(room.id) || [];
           return {
             id: room.id, name: room.name, count: ms.length,
@@ -596,11 +630,14 @@ async function requestHandler(req, res) {
       // ---- 代办清单（按任务）----
       const tm = p.match(/^\/api\/rooms\/([^/]+)\/todos$/);
       if (tm && method === 'GET') {
+        if (!canAccessRoom(rooms.find((r) => r.id === tm[1]), me)) return sendJson(res, 403, { error: '该任务已加密，请输入密码' });
         return sendJson(res, 200, { todos: todos.filter((x) => x.roomId === tm[1]) });
       }
       if (tm && method === 'POST') {
         const rid = tm[1];
-        if (!rooms.find((r) => r.id === rid)) return sendJson(res, 404, { error: '任务不存在' });
+        const room = rooms.find((r) => r.id === rid);
+        if (!room) return sendJson(res, 404, { error: '任务不存在' });
+        if (!canAccessRoom(room, me)) return sendJson(res, 403, { error: '该任务已加密，请输入密码' });
         const b = JSON.parse(await readBody(req) || '{}');
         const text = (b.text || '').trim();
         if (!text) return sendJson(res, 400, { error: '内容不能为空' });
@@ -628,12 +665,15 @@ async function requestHandler(req, res) {
       // ---- 备注（按任务，单条）----
       const nm = p.match(/^\/api\/rooms\/([^/]+)\/notes$/);
       if (nm && method === 'GET') {
+        if (!canAccessRoom(rooms.find((r) => r.id === nm[1]), me)) return sendJson(res, 403, { error: '该任务已加密，请输入密码' });
         const n = notes.find((x) => x.roomId === nm[1]);
         return sendJson(res, 200, { text: n ? n.text : '' });
       }
       if (nm && method === 'POST') {
         const rid = nm[1];
-        if (!rooms.find((r) => r.id === rid)) return sendJson(res, 404, { error: '任务不存在' });
+        const room = rooms.find((r) => r.id === rid);
+        if (!room) return sendJson(res, 404, { error: '任务不存在' });
+        if (!canAccessRoom(room, me)) return sendJson(res, 403, { error: '该任务已加密，请输入密码' });
         const b = JSON.parse(await readBody(req) || '{}');
         const text = b.text || '';
         let n = notes.find((x) => x.roomId === rid);

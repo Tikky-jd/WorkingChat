@@ -254,16 +254,15 @@
     <header class="page-head">
       <button class="btn-ghost" data-act="view" data-view="main">← 返回工作台</button>
       <h2>工作日报</h2>
-      <span class="page-sub">勾选今日任务 → 一键生成日报 → 复制发群</span>
+      <span class="page-sub">弹窗选择任务 → 一键生成日报 → 复制发群</span>
     </header>
     <div class="page-body">
       <div class="daily-toolbar">
         <button id="dailyGen" class="btn-new">📋 生成日报</button>
         <button id="dailyCopy" class="btn-ghost hidden">📄 复制到剪贴板</button>
-        <button id="dailySelAll" class="btn-ghost">全选</button>
         <button id="dailyClear" class="btn-ghost hidden">清空</button>
       </div>
-      <div id="dailyRooms" class="daily-rooms"><div class="empty">加载中…</div></div>
+      <div id="dailyHint" class="daily-hint">点击「生成日报」，在弹窗中勾选要汇报的任务</div>
       <textarea id="dailyOut" class="daily-out hidden" readonly placeholder="日报将在这里生成…"></textarea>
     </div>
   </section>
@@ -352,7 +351,37 @@
     <div class="modal-card">
       <div class="modal-head"><h3>新建任务</h3><button id="closeTask" class="btn-ghost">✕</button></div>
       <input id="taskName" class="input" placeholder="任务名，如：周五例会纪要" />
+      <p class="modal-label">访问权限</p>
+      <div class="task-vis">
+        <label><input type="radio" name="taskVis" value="public" checked /> 公开（所有成员可见可进）</label>
+        <label><input type="radio" name="taskVis" value="encrypted" /> 加密（需密码进入）</label>
+      </div>
+      <input id="taskPass" class="input hidden" placeholder="设置访问密码（成员进入时需输入）" type="password" maxlength="100" />
       <button id="taskCreate" class="btn-primary">创建并进入</button>
+    </div>
+  </div>
+
+  <!-- 解锁加密任务弹窗 -->
+  <div id="unlockModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3>🔒 输入访问密码</h3><button id="closeUnlock" class="btn-ghost">✕</button></div>
+      <p class="modal-label" id="unlockTitle">该任务已加密</p>
+      <input id="unlockPass" class="input" type="password" placeholder="访问密码" maxlength="100" />
+      <button id="unlockConfirm" class="btn-primary">进入任务</button>
+    </div>
+  </div>
+
+  <!-- 日报选择任务弹窗 -->
+  <div id="dailyModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3>选择任务</h3><button id="closeDaily" class="btn-ghost">✕</button></div>
+      <p class="modal-label">勾选要写入日报的任务（默认全选）</p>
+      <div id="dailyPickList" class="daily-pick-list"></div>
+      <div class="modal-foot daily-foot">
+        <button id="dailyPickAll" class="btn-ghost">全选</button>
+        <button id="dailyPickNone" class="btn-ghost">清空</button>
+        <button id="dailyPickOk" class="btn-primary">生成日报</button>
+      </div>
     </div>
   </div>
 

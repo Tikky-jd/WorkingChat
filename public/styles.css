@@ -257,6 +257,9 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .modal-head h3 { margin: 0; font-size: 17px; }
 .modal-label { font-size: 13px; color: var(--muted); margin: 18px 0 8px; }
+.task-vis { display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; }
+.task-vis label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.task-vis input { accent-color: var(--primary); }
 .swatches { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .swatch { display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); cursor: pointer; font-size: 14px; }
 .swatch.active { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 30%, transparent); }
@@ -294,6 +297,10 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .page-body { flex: 1; overflow: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 
 /* ---------- 工作日报 ---------- */
+.daily-hint { color: var(--muted); font-size: 13.5px; text-align: center; margin: 40px 0; }
+.daily-pick-list { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+.daily-foot { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.daily-foot .btn-primary { width: auto; }
 .daily-toolbar { display: flex; gap: 10px; align-items: center; }
 .daily-toolbar .btn-new { margin: 0; padding: 9px 16px; }
 .daily-rooms { display: flex; flex-direction: column; gap: 10px; max-width: 720px; }

@@ -395,3 +395,40 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .moan-time { font-size: 11.5px; color: var(--muted); }
 .moan-del { width: 20px; height: 20px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 50%; font-size: 12px; }
 .moan-del:hover { background: rgba(0, 0, 0, .1); color: #d33; }
+
+/* ---------- AI任务区：回到底部悬浮按钮（纯图标） ---------- */
+.panel-chat { position: relative; }
+.scroll-bottom {
+  position: absolute; right: 18px; bottom: 96px; z-index: 6;
+  width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--primary); color: #fff; box-shadow: 0 4px 14px rgba(0, 0, 0, .22);
+  transition: transform .12s ease, opacity .12s ease; opacity: .92;
+}
+.scroll-bottom:hover { transform: translateY(2px) scale(1.05); opacity: 1; }
+.scroll-bottom svg { display: block; }
+
+/* ---------- 消息右键操作菜单 ---------- */
+.ctx-menu {
+  position: fixed; z-index: 50; min-width: 132px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+.ctx-item {
+  display: block; width: 100%; text-align: left; border: none; background: transparent;
+  color: var(--text); font-size: 13.5px; padding: 9px 12px; border-radius: 8px; cursor: pointer;
+}
+.ctx-item:hover { background: var(--panel-2); }
+.msg-edited { font-size: 11px; color: var(--muted); margin-left: 6px; }
+.recalled-row { justify-content: center; }
+.msg-recalled { font-size: 12px; color: var(--muted); background: #f0f2f5; border-radius: 8px; padding: 4px 12px; margin: 6px auto; text-align: center; }
+
+/* ---------- 今日活跃：称号配色（高→低） ---------- */
+.rank-title { font-weight: 700; padding: 1px 7px; border-radius: 999px; font-size: 12px; margin-right: 4px; }
+.rank-title.t-真神 { color: #fff; background: linear-gradient(135deg, #ff512f, #dd2476); }
+.rank-title.t-悟道 { color: #fff; background: linear-gradient(135deg, #8e2de2, #4a00e0); }
+.rank-title.t-化神 { color: #fff; background: linear-gradient(135deg, #2193b0, #6dd5ed); }
+.rank-title.t-元婴 { color: #084c61; background: linear-gradient(135deg, #43e97b, #38f9d7); }
+.rank-title.t-结丹 { color: #6b3e05; background: linear-gradient(135deg, #f6d365, #fda085); }
+.rank-title.t-筑基 { color: #3a4a1f; background: linear-gradient(135deg, #c1dfc4, #deecdd); }
+.rank-title.t-练气 { color: #37474f; background: #cfd8dc; }

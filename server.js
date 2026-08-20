@@ -117,6 +117,13 @@ function canAccessRoom(room, email) {
   if (isAdmin(email) || room.createdBy === email) return true;
   return !!(unlocked.get(email) && unlocked.get(email).has(room.id));
 }
+// 活跃度称号（由高到低）。积分规则：在线每分钟=1分（在线10分钟=10分），每条消息=1分
+const TITLES = [
+  { t: '真神', min: 500 }, { t: '悟道', min: 400 }, { t: '化神', min: 300 },
+  { t: '元婴', min: 200 }, { t: '结丹', min: 100 }, { t: '筑基', min: 20 },
+  { t: '练气', min: 0 },
+];
+function titleOf(score) { return (TITLES.find((x) => score >= x.min) || TITLES[TITLES.length - 1]).t; }
 function nickOf(email) { const u = users.find((x) => x.email === email); return u ? u.nickname : email; }
 
 // 在线状态：email -> {roomId, ts}
@@ -131,6 +138,11 @@ function pushRoomEvent(roomId, data) {
     if (room && !canAccessRoom(room, email)) continue; // 加密任务只推给有权者
     for (const res of set) { try { res.write(payload); } catch {} }
   }
+}
+// 广播给所有在线用户（房间新建等全局事件）
+function pushAll(data) {
+  const payload = 'data: ' + JSON.stringify(data) + '\n\n';
+  for (const [, set] of sseClients) for (const res of set) { try { res.write(payload); } catch {} }
 }
 
 function currentUser(req) {
@@ -312,7 +324,11 @@ async function requestHandler(req, res) {
       if (p === '/api/logout' && method === 'POST') {
         const h = req.headers['authorization'] || '';
         const m = h.match(/^Bearer\s+(.+)$/i);
-        if (m && sessions[m[1]]) { delete sessions[m[1]]; saveSessions(); }
+        if (m && sessions[m[1]]) {
+          const email = sessions[m[1]].email;
+          delete sessions[m[1]]; saveSessions();
+          unlocked.delete(email); // 登出即清解锁态：下次登录仍需密码
+        }
         return sendJson(res, 200, { ok: true });
       }
       if (p === '/api/me' && method === 'GET') {
@@ -360,6 +376,8 @@ async function requestHandler(req, res) {
         }
         const room = { id: crypto.randomUUID(), name, createdBy: me, createdAt: Date.now(), encrypted, passwordHash };
         rooms.push(room); saveRooms();
+        // 实时：通知所有在线用户刷新任务列表（剥离密码哈希）
+        pushAll({ type: 'roomCreated', room: { id: room.id, name: room.name, createdBy: room.createdBy, createdAt: room.createdAt, encrypted: room.encrypted } });
         return sendJson(res, 200, { room: { id: room.id, name: room.name, createdBy: room.createdBy, createdAt: room.createdAt, encrypted: room.encrypted } });
       }
       // ---- 解锁加密任务 ----
@@ -372,6 +390,14 @@ async function requestHandler(req, res) {
         if (sha256(String(b.password || '')) !== room.passwordHash) return sendJson(res, 403, { error: '密码错误' });
         if (!unlocked.has(me)) unlocked.set(me, new Set());
         unlocked.get(me).add(room.id);
+        return sendJson(res, 200, { ok: true });
+      }
+      // ---- 退出加密任务（清除解锁态 = 之后进入需重新输密码）----
+      const ex = p.match(/^\/api\/rooms\/([^/]+)\/exit$/);
+      if (ex && method === 'POST') {
+        if (!rooms.find((r) => r.id === ex[1])) return sendJson(res, 404, { error: '任务不存在' });
+        if (unlocked.has(me)) unlocked.get(me).delete(ex[1]);
+        presence.delete(me); // 同时离开在线状态
         return sendJson(res, 200, { ok: true });
       }
       // ---- 管理员删除任务（级联清理消息/待办/备注/图片）----
@@ -416,40 +442,53 @@ async function requestHandler(req, res) {
         pushRoomEvent(roomId, { type: 'message', roomId });
         return sendJson(res, 200, { message: msg });
       }
-      // ---- 管理员删除单条消息 ----
+      // ---- 删除 / 编辑单条消息 ----
       const md = p.match(/^\/api\/rooms\/([^/]+)\/messages\/([^/]+)$/);
       if (md && method === 'DELETE') {
-        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
         const idx = messages.findIndex((x) => x.id === md[2] && x.roomId === md[1]);
         if (idx < 0) return sendJson(res, 404, { error: '消息不存在' });
-        const [removed] = messages.splice(idx, 1);
+        const msg = messages[idx];
+        if (!isAdmin(me) && msg.user !== me) return sendJson(res, 403, { error: '只能撤回自己发送的消息' });
+        if (msg.recalled) return sendJson(res, 400, { error: '该消息已撤回' });
+        const oldImg = msg.image;
+        msg.recalled = true; msg.text = ''; msg.image = null; msg.edited = false; msg.recalledBy = me;
         saveMessages();
-        removeImageIfUnused(removed.image);
+        removeImageIfUnused(oldImg);
         pushRoomEvent(md[1], { type: 'message', roomId: md[1] });
         return sendJson(res, 200, { ok: true });
       }
-      // ---- 在线状态（按房间）----
+      if (md && method === 'PATCH') {
+        const msg = messages.find((x) => x.id === md[2] && x.roomId === md[1]);
+        if (!msg) return sendJson(res, 404, { error: '消息不存在' });
+        if (msg.user !== me) return sendJson(res, 403, { error: '只能编辑自己发送的消息' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        const text = (b.text || '').trim();
+        if (!text) return sendJson(res, 400, { error: '内容不能为空' });
+        if (text.length > MAX_TEXT) return sendJson(res, 400, { error: '内容过长' });
+        msg.text = text; msg.edited = true; msg.editedAt = Date.now(); saveMessages();
+        pushRoomEvent(md[1], { type: 'message', roomId: md[1] });
+        return sendJson(res, 200, { ok: true });
+      }
+      // ---- 在线状态（全局：登录即计在线时长，跨房间/仪表盘都累计）----
       if (p === '/api/presence' && method === 'POST') {
         const b = JSON.parse(await readBody(req) || '{}');
         const now = Date.now();
+        ensureStatsDate(); // 无条件先校验跨天，保证「今日活跃」只算当天
         const prev = presence.get(me);
-        if (b.roomId) {
-          const room = rooms.find((r) => r.id === b.roomId);
-          if (room && !canAccessRoom(room, me)) return sendJson(res, 403, { error: '该任务已加密，请输入密码' });
-          // 连续在线（上次心跳仍在同一房间且间隔 < 20s）→ 累计在线时长（摸鱼指数）
-          if (prev && prev.roomId === b.roomId && now - prev.ts < 20000) {
-            ensureStatsDate();
-            stats.onlineSec[me] = (stats.onlineSec[me] || 0) + (now - prev.ts);
+        if (prev) {
+          let delta = now - prev.ts;
+          if (delta > 60000) delta = 60000; // 离开/重连/跨天间隙>1分钟不累计，防虚高
+          if (delta > 0) {
+            stats.onlineSec[me] = (stats.onlineSec[me] || 0) + delta;
             stats.lastTs[me] = now;
             saveStats();
           }
-          presence.set(me, { roomId: b.roomId, ts: now });
-        } else {
-          presence.delete(me);
         }
+        presence.set(me, { roomId: b.roomId || null, ts: now });
+        const rid = b.roomId;
         const online = [];
         for (const [email, st] of presence) {
-          if (st.roomId === b.roomId && now - st.ts < 15000) online.push({ email, nickname: nickOf(email) });
+          if ((rid ? st.roomId === rid : true) && now - st.ts < 15000) online.push({ email, nickname: nickOf(email) });
         }
         return sendJson(res, 200, { online });
       }
@@ -482,7 +521,7 @@ async function requestHandler(req, res) {
         return sendJson(res, 200, { members: list });
       }
 
-      // ---- 今日活跃榜（摸鱼指数：在线时长 + 消息 + 完成待办 → 称号）----
+      // ---- 今日活跃榜（摸鱼指数：在线时长 + 消息 → 称号）----
       if (p === '/api/rank' && method === 'GET') {
         ensureStatsDate();
         const now = Date.now();
@@ -493,8 +532,9 @@ async function requestHandler(req, res) {
         const list = users.map((u) => {
           const onlineSec = stats.onlineSec[u.email] || 0;
           const ms = msgs[u.email] || 0, dn = dones[u.email] || 0;
-          const score = Math.round(onlineSec / 60) + ms * 30 + dn * 50;
-          const title = score >= 600 ? '总监' : score >= 300 ? '达人' : score >= 100 ? '干事' : '副总监';
+          // onlineSec 单位为毫秒：÷60000 转分钟，在线每分钟=1分（在线10分钟=10分）；每条消息=1分；完成度不再计入
+          const score = Math.round(onlineSec / 60000) + ms;
+          const title = titleOf(score);
           const st = presence.get(u.email);
           return { nickname: u.nickname, email: u.email, role: u.role, online: !!(st && now - st.ts < 15000), onlineSec, msgs: ms, done: dn, score, title };
         });

@@ -22,6 +22,11 @@ let rooms = [];
 let currentRoomId = null;
 let pendingRoomId = null;      // 待解锁的加密任务 id
 let pendingImage = null;      // 待发送图片 dataURL
+let pendingExitId = null;     // 待退出的加密任务 id（切换确认用）
+let pendingEnterId = null;     // 确认退出后要进入的任务 id
+let curMessages = [];          // 当前房间消息缓存（右键菜单查引用）
+let editingMid = null;         // 正在重编辑的消息 id（null=发新消息）
+let ctxMid = null;             // 右键选中的消息 id
 let pollTimer = null, presenceTimer = null;
 
 const fmtTime = (t) => {
@@ -147,34 +152,60 @@ $('#taskCreate').onclick = async () => {
   } catch (e) { alert(e.message); }
 };
 // 解锁加密任务
+function isAdminOrCreator(r) { return myRole === 'admin' || (r && r.createdBy === me); }
+function showUnlock(id) {
+  const r = rooms.find((x) => x.id === id);
+  pendingRoomId = id;
+  $('#unlockTitle').textContent = `「${r ? r.name : '该任务'}」已加密，请输入访问密码`;
+  $('#unlockPass').value = '';
+  show($('#unlockModal'), true);
+  $('#unlockPass').focus();
+}
 $('#unlockConfirm').onclick = async () => {
   const id = pendingRoomId;
   if (!id) return;
   try {
     await api('POST', `/api/rooms/${id}/unlock`, { password: $('#unlockPass').value });
-    localStorage.setItem('oc_unlocked:' + me + ':' + id, '1');
     show($('#unlockModal'), false);
-    await loadRooms();
     await enterRoom(id);
   } catch (e) { alert(e.message); }
 };
 $('#closeUnlock').onclick = () => show($('#unlockModal'), false);
 
+// 确认退出加密任务（切换其它任务时触发）
+$('#exitConfirm').onclick = async () => {
+  const oldId = pendingExitId;
+  show($('#exitModal'), false);
+  if (oldId) { try { await api('POST', `/api/rooms/${oldId}/exit`); } catch {} }
+  const newId = pendingEnterId; pendingExitId = null; pendingEnterId = null;
+  if (newId) proceedEnter(newId);
+};
+$('#exitClose').onclick = () => { show($('#exitModal'), false); pendingExitId = null; pendingEnterId = null; };
+$('#exitCancel').onclick = () => { show($('#exitModal'), false); pendingExitId = null; pendingEnterId = null; };
+
 async function selectRoom(id) {
-  const room = rooms.find((r) => r.id === id);
-  // 加密任务：管理员/创建者免密；其他成员需已解锁（localStorage 记录按邮箱区分）
-  if (room && room.encrypted && myRole !== 'admin' && room.createdBy !== me && !localStorage.getItem('oc_unlocked:' + me + ':' + id)) {
-    pendingRoomId = id;
-    $('#unlockTitle').textContent = `「${room.name}」已加密，请输入访问密码`;
-    $('#unlockPass').value = '';
-    show($('#unlockModal'), true);
-    $('#unlockPass').focus();
+  const target = rooms.find((r) => r.id === id);
+  const cur = rooms.find((r) => r.id === currentRoomId);
+  // 从加密任务切换到其它任务 = 退出当前任务，需确认
+  if (cur && cur.encrypted && currentRoomId !== id) {
+    pendingExitId = currentRoomId; pendingEnterId = id;
+    $('#exitTitle').textContent = isAdminOrCreator(cur)
+      ? `将退出加密任务「${cur.name}」（你是管理员/创建者，可随时免密返回）。`
+      : `确认退出加密任务「${cur.name}」？退出后需重新输入密码才能再次进入。`;
+    show($('#exitModal'), true);
     return;
   }
+  proceedEnter(id);
+}
+async function proceedEnter(id) {
+  const target = rooms.find((r) => r.id === id);
+  // 加密任务：管理员/创建者免密；其它成员每次进入都需密码
+  if (target && target.encrypted && myRole !== 'admin' && target.createdBy !== me) { showUnlock(id); return; }
   await enterRoom(id);
 }
 async function enterRoom(id) {
   currentRoomId = id;
+  editingMid = null; // 进入新任务清空重编辑态
   const idx = rooms.findIndex((r) => r.id === id);
   const label = idx > -1 ? `任务${idx + 1}：${rooms[idx].name}` : '';
   $('#roomTitle').textContent = label;
@@ -182,9 +213,15 @@ async function enterRoom(id) {
   $('#notesTip').textContent = label ? '自动保存' : '';
   renderRooms();
   if (!currentRoomId) { renderTodos([]); $('#notesArea').value = ''; return; }
-  await loadMessages();
-  await loadTodos();
-  await loadNotes();
+  try {
+    await loadMessages();
+    await loadTodos();
+    await loadNotes();
+  } catch (e) {
+    // 服务端判定未解锁（含重启清态 / 刚切换任务）→ 重新弹密码框
+    if (e && e.message && e.message.indexOf('加密') > -1) { showUnlock(id); return; }
+    throw e;
+  }
   startRoomLive();
 }
 
@@ -195,21 +232,32 @@ async function loadMessages() {
   renderMessages(messages);
 }
 function renderMessages(list) {
+  curMessages = list || [];
   const box = $('#messages');
   box.innerHTML = '';
-  if (!list.length) { box.innerHTML = '<div class="empty">还没有消息，发一条吧</div>'; return; }
+  if (!list.length) { box.innerHTML = '<div class="empty">还没有消息，发一条吧</div>'; updateScrollBtn(); return; }
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   list.forEach((m) => {
     const row = document.createElement('div');
+    row.dataset.mid = m.id;
+    if (m.recalled) {
+      row.className = 'msg-row recalled-row';
+      row.innerHTML = `<div class="msg-recalled">${escapeHtml(m.nickname || '成员')} 撤回了一条消息</div>`;
+      box.appendChild(row);
+      return;
+    }
     row.className = 'msg-row ' + (m.user === me ? 'me' : 'other');
     let inner = '';
     if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" data-act="openimg" data-src="${BASE + m.image}" />`;
     if (m.text) inner += `<div class="text">${escapeHtml(m.text)}</div>`;
-    const delBtn = myRole === 'admin' ? `<button class="msg-del" title="删除此消息" data-act="delmsg" data-id="${m.id}">✕</button>` : '';
-    row.innerHTML = `<div class="bubble"><div class="meta"><span class="who">${escapeHtml(m.nickname)}</span><span class="time">${fmtTime(m.time)}</span>${delBtn}</div>${inner}</div>`;
+    const own = m.user === me;
+    const delBtn = (myRole === 'admin' || own) && !m.recalled ? `<button class="msg-del" title="删除此消息" data-act="delmsg" data-id="${m.id}">✕</button>` : '';
+    const editedTag = m.edited ? '<span class="msg-edited">已编辑</span>' : '';
+    row.innerHTML = `<div class="bubble"><div class="meta"><span class="who">${escapeHtml(m.nickname)}</span><span class="time">${fmtTime(m.time)}</span>${editedTag}${delBtn}</div>${inner}</div>`;
     box.appendChild(row);
   });
   if (atBottom) box.scrollTop = box.scrollHeight;
+  updateScrollBtn();
 }
 
 // 管理员删除消息
@@ -227,6 +275,14 @@ async function sendMsg() {
   if (!currentRoomId) return;
   const text = $('#input').value.trim();
   if (!text && !pendingImage) return;
+  if (editingMid) {
+    // 重编辑：更新原消息（仅文本）
+    const id = editingMid; editingMid = null;
+    $('#input').value = '';
+    try { await api('PATCH', `/api/rooms/${currentRoomId}/messages/${id}`, { text }); await loadMessages(); }
+    catch (e) { alert(e.message); }
+    return;
+  }
   const body = {};
   if (text) body.text = text;
   if (pendingImage) body.image = pendingImage;
@@ -256,6 +312,55 @@ function renderImgChip() {
 }
 function clearPendingImage() { pendingImage = null; renderImgChip(); }
 window.clearPendingImage = clearPendingImage;
+
+// ---------- 回到底部悬浮按钮（纯图标，无文字）----------
+function isAtBottom() { const b = $('#messages'); return b.scrollHeight - b.scrollTop - b.clientHeight < 60; }
+function updateScrollBtn() { const b = $('#scrollBottom'); if (b) show(b, !isAtBottom() && !!currentRoomId); }
+$('#messages').addEventListener('scroll', updateScrollBtn);
+$('#scrollBottom').onclick = () => { const b = $('#messages'); b.scrollTop = b.scrollHeight; };
+
+// ---------- 消息右键操作菜单（撤回 / 重编辑 / 引用）----------
+function hideMsgMenu() { show($('#msgMenu'), false); }
+function startEdit(m) {
+  editingMid = m.id;
+  $('#input').value = m.text || '';
+  $('#input').focus();
+  flash('正在重编辑，发送即更新原消息（仅文本）');
+}
+$('#messages').addEventListener('contextmenu', (e) => {
+  const row = e.target.closest('.msg-row');
+  if (!row || !currentRoomId) return;
+  e.preventDefault();
+  ctxMid = row.dataset.mid;
+  const m = curMessages.find((x) => x.id === ctxMid);
+  if (!m || m.recalled) { hideMsgMenu(); return; }
+  const own = m.user === me;
+  show($('#ctxRecall'), !!own || myRole === 'admin');
+  show($('#ctxReedit'), !!own && !!m.text);
+  show($('#ctxQuote'), true);
+  const menu = $('#msgMenu');
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 170) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 140) + 'px';
+  show(menu, true);
+});
+$('#ctxRecall').onclick = async () => {
+  hideMsgMenu();
+  if (!ctxMid || !currentRoomId) return;
+  try { await api('DELETE', `/api/rooms/${currentRoomId}/messages/${ctxMid}`); await loadMessages(); }
+  catch (e) { alert(e.message); }
+};
+$('#ctxReedit').onclick = () => {
+  hideMsgMenu();
+  const m = curMessages.find((x) => x.id === ctxMid);
+  if (m) startEdit(m);
+};
+$('#ctxQuote').onclick = () => {
+  hideMsgMenu();
+  const m = curMessages.find((x) => x.id === ctxMid);
+  if (m) { const q = `> ${m.nickname}：${m.text || '[图片]'}\n`; $('#input').value = q + $('#input').value; $('#input').focus(); }
+};
+document.addEventListener('click', (e) => { if (!e.target.closest('#msgMenu')) hideMsgMenu(); });
+document.addEventListener('scroll', hideMsgMenu, true);
 
 // 模型下拉（演示）
 $('#modelSel').onchange = (e) => { if (e.target.value) flash(`已选择模型：${e.target.value}（演示，仅展示）`); };
@@ -293,6 +398,7 @@ function connectSSE() {
         const d = JSON.parse(e.data);
         if (!d || !d.type) return;
         if (d.type === 'message' && d.roomId === currentRoomId) loadMessages().catch(() => {});
+        else if (d.type === 'roomCreated') loadRooms().catch(() => {});
         else if (d.type === 'roomDeleted' && d.roomId === currentRoomId) {
           currentRoomId = null;
           $('#roomTitle').textContent = '请选择左侧任务';
@@ -413,7 +519,7 @@ function renderRank(list) {
   list.forEach((m, i) => {
     const row = document.createElement('div');
     row.className = 'member-item';
-    const mins = Math.floor(m.onlineSec / 60);
+    const mins = Math.floor(m.onlineSec / 60000); // onlineSec 单位是毫秒 → 转分钟
     const role = m.role === 'admin' ? '<span class="member-role">管理员</span>' : '';
     row.innerHTML =
       `<span class="member-dot ${m.online ? 'on' : ''}"></span>` +

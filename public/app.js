@@ -27,6 +27,7 @@ let pendingEnterId = null;     // 确认退出后要进入的任务 id
 let curMessages = [];          // 当前房间消息缓存（右键菜单查引用）
 let editingMid = null;         // 正在重编辑的消息 id（null=发新消息）
 let ctxMid = null;             // 右键选中的消息 id
+let ctxRoomId = null;          // 右键选中的任务 id（任务设置菜单）
 let pollTimer = null, presenceTimer = null;
 
 const fmtTime = (t) => {
@@ -91,6 +92,8 @@ async function enter() {
   await loadRooms();
   await loadRank();
   connectSSE();
+  ensureNotifyPerm(); // 请求系统通知权限（若尚未决定）
+  loadNotifMuted();   // 读取各任务浏览器提示开关
 }
 
 // 首页「进入协作台」/ 导航登录 → 显示登录/注册
@@ -113,8 +116,10 @@ function renderRooms() {
   rooms.forEach((r, i) => {
     const div = document.createElement('div');
     div.className = 'room-item' + (r.id === currentRoomId ? ' active' : '');
+    div.dataset.rid = r.id;
     const delBtn = myRole === 'admin' ? `<button class="room-del" title="删除此任务（含其下所有内容）" data-act="delroom" data-id="${r.id}">✕</button>` : '';
-    div.innerHTML = `<span class="room-idx">任务${i + 1}</span><span class="room-name">${r.encrypted ? '🔒 ' : ''}${escapeHtml(r.name)}</span>${delBtn}`;
+    const un = unread[r.id] || 0;
+    div.innerHTML = `<span class="room-idx">任务${i + 1}</span><span class="room-name">${r.encrypted ? '🔒 ' : ''}${escapeHtml(r.name)}</span>${un > 0 ? `<span class="room-unread" title="${un} 条未读"></span>` : ''}${delBtn}`;
     div.onclick = () => selectRoom(r.id);
     box.appendChild(div);
   });
@@ -205,6 +210,7 @@ async function proceedEnter(id) {
 }
 async function enterRoom(id) {
   currentRoomId = id;
+  unread[id] = 0; updateFavicon(); // 进入任务清零未读（renderRooms 随后刷新列表角标）
   editingMid = null; // 进入新任务清空重编辑态
   const idx = rooms.findIndex((r) => r.id === id);
   const label = idx > -1 ? `任务${idx + 1}：${rooms[idx].name}` : '';
@@ -359,8 +365,31 @@ $('#ctxQuote').onclick = () => {
   const m = curMessages.find((x) => x.id === ctxMid);
   if (m) { const q = `> ${m.nickname}：${m.text || '[图片]'}\n`; $('#input').value = q + $('#input').value; $('#input').focus(); }
 };
-document.addEventListener('click', (e) => { if (!e.target.closest('#msgMenu')) hideMsgMenu(); });
-document.addEventListener('scroll', hideMsgMenu, true);
+// ---------- 任务设置菜单（右键任务：浏览器提示开/关）----------
+function hideRoomMenu() { show($('#roomMenu'), false); }
+$('#roomList').addEventListener('contextmenu', (e) => {
+  const item = e.target.closest('.room-item');
+  if (!item) return;
+  e.preventDefault();
+  hideMsgMenu();
+  ctxRoomId = item.dataset.rid;
+  $('#roomNotifToggle').textContent = notifMuted[ctxRoomId] ? '开启浏览器提示' : '关闭浏览器提示';
+  const menu = $('#roomMenu');
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 60) + 'px';
+  show(menu, true);
+});
+$('#roomNotifToggle').onclick = () => {
+  hideRoomMenu();
+  if (!ctxRoomId) return;
+  if (notifMuted[ctxRoomId]) delete notifMuted[ctxRoomId]; else notifMuted[ctxRoomId] = true;
+  saveNotifMuted();
+};
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#msgMenu')) hideMsgMenu();
+  if (!e.target.closest('#roomMenu')) hideRoomMenu();
+});
+document.addEventListener('scroll', () => { hideMsgMenu(); hideRoomMenu(); }, true);
 
 // 模型下拉（演示）
 $('#modelSel').onchange = (e) => { if (e.target.value) flash(`已选择模型：${e.target.value}（演示，仅展示）`); };
@@ -386,9 +415,122 @@ if (SR) {
   $('#voiceBtn').disabled = true; $('#voiceBtn').title = '当前浏览器不支持语音输入（建议 Chrome/Edge）';
 }
 
+// ---------- 未读消息角标（tab 图标红点+数字；任务列表同步角标）----------
+const unread = {}; // roomId -> 未读数
+let favIcon = null, favBase = '';
+function initFavicon() {
+  favIcon = document.querySelector('link[rel="icon"]');
+  if (!favIcon) return;
+  favBase = favIcon.href || '';
+}
+function totalUnread() { let n = 0; for (const k in unread) n += unread[k]; return n; }
+function drawBaseIcon(ctx) {
+  // 蓝色圆角方块 + 三条白杠（与 index.html 的 favicon 一致）
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') ctx.roundRect(4, 4, 56, 56, 14);
+  else ctx.rect(4, 4, 56, 56);
+  ctx.fillStyle = '#2563eb'; ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.fillRect(16, 18, 32, 5);
+  ctx.globalAlpha = 0.8; ctx.fillRect(16, 29, 22, 5);
+  ctx.globalAlpha = 0.65; ctx.fillRect(16, 40, 28, 5);
+  ctx.globalAlpha = 1;
+}
+function updateFavicon() {
+  if (!favIcon) return;
+  const n = totalUnread();
+  if (n <= 0) { favIcon.href = favBase; return; }
+  // 纯 canvas 直接画：基础图标 + 红色数字角标，同步生成，不依赖图片加载
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  drawBaseIcon(ctx);
+  const text = n > 99 ? '99+' : String(n);
+  ctx.beginPath(); ctx.arc(47, 17, 14, 0, Math.PI * 2);
+  ctx.fillStyle = '#ef4444'; ctx.fill();
+  ctx.lineWidth = 3.5; ctx.strokeStyle = '#fff'; ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 47, 17.5);
+  favIcon.href = c.toDataURL('image/png');
+}
+function bumpUnread(id) { if (!id) return; unread[id] = (unread[id] || 0) + 1; updateFavicon(); renderRooms(); }
+function clearRoomUnread(id) { if (id && unread[id]) { unread[id] = 0; updateFavicon(); renderRooms(); } }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) clearRoomUnread(currentRoomId); });
+
+// ---------- 系统通知（任务栏图标闪烁 + 弹窗；手机端震动）+ 自定义"滴滴"音效 ----------
+let notifIcon = '';
+let notifMuted = {}; // roomId -> true（该任务关闭浏览器提示）
+function loadNotifMuted() { try { notifMuted = JSON.parse(localStorage.getItem('oc_notif_muted') || '{}'); } catch { notifMuted = {}; } }
+function saveNotifMuted() { try { localStorage.setItem('oc_notif_muted', JSON.stringify(notifMuted)); } catch {} }
+function getNotifIcon() {
+  if (notifIcon) return notifIcon;
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  drawBaseIcon(c.getContext('2d'));
+  notifIcon = c.toDataURL('image/png');
+  return notifIcon;
+}
+let beepCtx = null, lastBeepAt = 0;
+function unlockAudio() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!beepCtx) beepCtx = new AC();
+    if (beepCtx.state === 'suspended') beepCtx.resume();
+  } catch {}
+}
+function playBeep() {
+  const now = Date.now();
+  if (now - lastBeepAt < 1500) return; // 防连发轰炸：1.5s 内只响一次"滴滴"
+  lastBeepAt = now;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!beepCtx) beepCtx = new AC();
+    if (beepCtx.state === 'suspended') beepCtx.resume();
+    const ctx = beepCtx, t0 = ctx.currentTime;
+    for (let i = 0; i < 2; i++) { // 两声"嘀嘀"：880Hz 短音 × 2，间隔 160ms
+      const t = t0 + i * 0.16;
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = 'sine'; osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.35, t + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(t); osc.stop(t + 0.12);
+    }
+  } catch {}
+}
+function ensureNotifyPerm() {
+  if (!('Notification' in window) || Notification.permission !== 'default') return;
+  try { Notification.requestPermission(); } catch {}
+}
+function notifyNewMsg(roomId) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (notifMuted[roomId]) return; // 该任务已在设置菜单中关闭浏览器提示
+  const r = rooms.find((x) => x.id === roomId);
+  try {
+    const n = new Notification('协作台', {
+      body: `「${r ? r.name : '某任务'}」收到新消息（共 ${totalUnread()} 条未读）`,
+      tag: 'oc-msg-' + roomId,
+      icon: getNotifIcon(),
+      silent: true, // 关掉系统默认提示音，改用自定义"滴滴"
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+    playBeep(); // 自定义"滴滴"音效
+    if (navigator.vibrate) try { navigator.vibrate(120); } catch {}
+  } catch {}
+}
+// 用户任意一次点击时：请求通知权限 + 解锁音频（浏览器要求用户手势）
+document.addEventListener('click', function oncePerm() {
+  ensureNotifyPerm();
+  unlockAudio();
+  document.removeEventListener('click', oncePerm);
+}, { capture: true });
+
 // ---------- SSE 实时推送（消息秒达；轮询保留兜底）----------
 let sse = null;
 function connectSSE() {
+  initFavicon();
   const token = localStorage.getItem('oc_token');
   if (!token || sse) return;
   try {
@@ -397,13 +539,21 @@ function connectSSE() {
       try {
         const d = JSON.parse(e.data);
         if (!d || !d.type) return;
-        if (d.type === 'message' && d.roomId === currentRoomId) loadMessages().catch(() => {});
+        if (d.type === 'message') {
+          // 当前任务且标签页在前台 → 立即刷新（已读）；否则计入未读角标 + 系统通知
+          if (d.roomId === currentRoomId && !document.hidden) loadMessages().catch(() => {});
+          else { bumpUnread(d.roomId); notifyNewMsg(d.roomId); }
+        }
         else if (d.type === 'roomCreated') loadRooms().catch(() => {});
-        else if (d.type === 'roomDeleted' && d.roomId === currentRoomId) {
-          currentRoomId = null;
-          $('#roomTitle').textContent = '请选择左侧任务';
-          renderTodos([]);
-          $('#notesArea').value = '';
+        else if (d.type === 'roomDeleted') {
+          unread[d.roomId] = 0;
+          if (d.roomId === currentRoomId) {
+            currentRoomId = null;
+            $('#roomTitle').textContent = '请选择左侧任务';
+            renderTodos([]);
+            $('#notesArea').value = '';
+          }
+          updateFavicon();
           loadRooms().catch(() => {});
         }
       } catch {}

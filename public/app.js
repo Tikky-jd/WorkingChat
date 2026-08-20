@@ -92,8 +92,7 @@ async function enter() {
   await loadRooms();
   await loadRank();
   connectSSE();
-  ensureNotifyPerm(); // 请求系统通知权限（若尚未决定）
-  loadNotifMuted();   // 读取各任务浏览器提示开关
+  loadNotifMuted();   // 读取各任务浏览器提示开关（权限请求见 oncePerm：仅非交互区域点击触发）
 }
 
 // 首页「进入协作台」/ 导航登录 → 显示登录/注册
@@ -235,7 +234,14 @@ async function enterRoom(id) {
 async function loadMessages() {
   if (!currentRoomId) return;
   const { messages } = await api('GET', `/api/rooms/${currentRoomId}/messages`);
+  const prev = curMessages || [];
   renderMessages(messages);
+  // 轮询兜底：SSE 断线/服务器未关 Nginx 缓冲时，后台标签页也要响"滴滴"+亮角标
+  // （2s 内 SSE 刚推过则跳过，避免与 SSE 路径重复提示）
+  if (document.hidden && prev.length && Date.now() - lastSseMsgAt > 2000) {
+    const fresh = messages.filter((m) => !m.recalled && !prev.some((p) => p.id === m.id));
+    if (fresh.length) { bumpUnread(currentRoomId); notifyNewMsg(currentRoomId); }
+  }
 }
 function renderMessages(list) {
   curMessages = list || [];
@@ -505,8 +511,9 @@ function ensureNotifyPerm() {
   try { Notification.requestPermission(); } catch {}
 }
 function notifyNewMsg(roomId) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
   if (notifMuted[roomId]) return; // 该任务已在设置菜单中关闭浏览器提示
+  playBeep(); // "滴滴"音效不依赖通知权限（页面点过一次解锁音频即可响）
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const r = rooms.find((x) => x.id === roomId);
   try {
     const n = new Notification('协作台', {
@@ -516,12 +523,16 @@ function notifyNewMsg(roomId) {
       silent: true, // 关掉系统默认提示音，改用自定义"滴滴"
     });
     n.onclick = () => { window.focus(); n.close(); };
-    playBeep(); // 自定义"滴滴"音效
     if (navigator.vibrate) try { navigator.vibrate(120); } catch {}
   } catch {}
 }
-// 用户任意一次点击时：请求通知权限 + 解锁音频（浏览器要求用户手势）
-document.addEventListener('click', function oncePerm() {
+// 请求通知权限（浏览器要求用户手势）。只允许在点击【非交互区域】时触发：
+// 若在点击任务/输入框/按钮时弹权限，Firefox 的模态权限弹窗会阻塞页面，
+// 导致用户点进加密任务后无法输入密码（管理员免密不经过该流程，只有普通用户会撞上）。
+document.addEventListener('click', function oncePerm(e) {
+  const t = e.target;
+  const interactive = t && t.closest ? t.closest('.modal, .room-item, .msg-row, input, textarea, button, select, a, .ctx-menu') : null;
+  if (interactive) { unlockAudio(); return; } // 交互元素上只解锁音频，绝不弹权限
   ensureNotifyPerm();
   unlockAudio();
   document.removeEventListener('click', oncePerm);
@@ -529,6 +540,7 @@ document.addEventListener('click', function oncePerm() {
 
 // ---------- SSE 实时推送（消息秒达；轮询保留兜底）----------
 let sse = null;
+let lastSseMsgAt = 0; // 最近一次 SSE 消息时间戳（轮询兜底据此避免重复提示）
 function connectSSE() {
   initFavicon();
   const token = localStorage.getItem('oc_token');
@@ -540,7 +552,8 @@ function connectSSE() {
         const d = JSON.parse(e.data);
         if (!d || !d.type) return;
         if (d.type === 'message') {
-          // 当前任务且标签页在前台 → 立即刷新（已读）；否则计入未读角标 + 系统通知
+          lastSseMsgAt = Date.now();
+          // 当前任务且标签页在前台 → 立即刷新（已读）；否则计入未读角标 + 提示音/系统通知
           if (d.roomId === currentRoomId && !document.hidden) loadMessages().catch(() => {});
           else { bumpUnread(d.roomId); notifyNewMsg(d.roomId); }
         }

@@ -778,6 +778,7 @@ document.addEventListener('click', (e) => {
   else if (act === 'vote') vote(el.dataset.vid, Number(el.dataset.idx));
   else if (act === 'delfolder') deleteKbFolder(el.dataset.id);
   else if (act === 'delkbdoc') deleteKbDoc();
+  else if (act === 'kbpin') toggleKbPin(el.dataset.id, el.dataset.pin === '1');
   else if (act === 'kbimg') $('#kbImgInput').click();
   else if (act === 'kbemoji') show($('#kbEmojiPanel'), $('#kbEmojiPanel').classList.contains('hidden'));
   else if (act === 'emoji') { insertAtCursor(el.dataset.e); show($('#kbEmojiPanel'), false); }
@@ -939,7 +940,8 @@ async function loadKb() {
       api('GET', '/api/kb'),
       api('GET', '/api/members').catch(() => ({ members: [] })),
     ]);
-    kbFolders = kbd.kb.folders; kbDocs = kbd.kb.docs;
+    kbFolders = kbd.kb.folders;
+    kbDocs = kbd.kb.docs.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)); // 置顶文档靠前
     kbNameMap = Object.fromEntries(mb.members.map((m) => [m.email, m.nickname]));
     if (kbCurrent && !kbDocs.find((d) => d.id === kbCurrent)) kbCurrent = null;
     renderKbTree();
@@ -953,9 +955,13 @@ function renderKbTree() {
   kbDocs.forEach((d) => { if (d.folderId && byFolder.has(d.folderId)) byFolder.get(d.folderId).push(d); });
   const docItem = (d) => {
     const div = document.createElement('div');
-    div.className = 'kb-doc' + (kbCurrent === d.id ? ' active' : '');
-    div.innerHTML = `<span class="kb-doc-t">${escapeHtml(d.title)}</span><span class="kb-doc-time">${fmtTime(d.updatedAt)}</span>`;
-    div.onclick = () => selectKbDoc(d.id);
+    div.className = 'kb-doc' + (kbCurrent === d.id ? ' active' : '') + (d.pinned ? ' kb-pinned' : '');
+    // 置顶按钮（仅管理员可点；普通成员置顶文档只显示 📌 标记）
+    const pin = myRole === 'admin'
+      ? `<button class="kb-pin" data-act="kbpin" data-id="${d.id}" data-pin="${d.pinned ? '1' : '0'}" title="${d.pinned ? '取消置顶' : '置顶'}">📌</button>`
+      : (d.pinned ? '<span class="kb-pin kb-pin-static" title="已置顶">📌</span>' : '');
+    div.innerHTML = `<span class="kb-doc-t">${escapeHtml(d.title)}</span>${pin}<span class="kb-doc-time">${fmtTime(d.updatedAt)}</span>`;
+    div.onclick = (e) => { if (e.target.closest('.kb-pin')) return; selectKbDoc(d.id); };
     return div;
   };
   kbFolders.forEach((f) => {
@@ -990,10 +996,14 @@ async function selectKbDoc(id) {
     $('#kbInfo').textContent = `创建：${kbNick(doc.createdBy)} · 更新：${fmtTime(doc.updatedAt)}`;
     $('#kbSaveState').textContent = '';
     show($('#kbDeleteDoc'), myRole === 'admin' || doc.createdBy === me);
-    $('#kbPreviewMode').checked = false;
-    show($('#kbContent'), true);
-    show($('#kbPreview'), false);
-    $('#kbPreview').innerHTML = '';
+    // 文档权限：作者/管理员/可管理=管理；可编辑=仅编辑；其余默认仅查看（不显示编辑按钮）
+    const canManage = myRole === 'admin' || doc.createdBy === me || (doc.perms && doc.perms[me] === 'manage');
+    const canEdit = canManage || (doc.perms && doc.perms[me] === 'edit');
+    show($('#kbPermBtn'), canManage);
+    show($('#kbEditToggle'), canEdit);
+    $('#kbMoveFolder').disabled = !canEdit;
+    setKbMode('view'); // 默认查看态：渲染预览、隐藏编辑器
+    $('#kbPreview').innerHTML = renderMarkdown(doc.content);
     const sel = $('#kbMoveFolder');
     sel.innerHTML = '<option value="">根目录</option>' + kbFolders.map((f) => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
     sel.value = doc.folderId || '';
@@ -1097,29 +1107,109 @@ $('#kbImgInput').onchange = (e) => {
 };
 const KB_EMOJI = ['😀','😂','🤣','😅','😊','🙃','😉','😍','🤔','😴','🤤','🥱','😭','😡','🤯','🥳','🤫','🙄','😎','😜','👍','👏','🙏','💪','🔥','💯','🍔','🍕','🥤','☕','🍺','🍉','🐟','🦑','🐸','🐷','🦄','💻','📱','🎮','🎧','🎵','📺','🎬','⚽','🏀','🌚','🌝','💤','🙈','🙉','🙊','✨','🎉','❓','❗'];
 $('#kbEmojiPanel').innerHTML = KB_EMOJI.map((ch) => `<button class="kb-emoji" data-act="emoji" data-e="${ch}">${ch}</button>`).join('');
-$('#kbPreviewMode').onchange = (e2) => {
-  const on = e2.target.checked;
-  show($('#kbContent'), !on);
-  show($('#kbPreview'), on);
-  if (on) $('#kbPreview').innerHTML = renderMarkdown($('#kbContent').value);
+// 查看态 / 编辑态切换：查看态=渲染预览（只读），编辑态=文本框+工具栏
+let kbEditing = false;
+function setKbMode(m) {
+  kbEditing = m === 'edit';
+  $('#kbEditToggle').textContent = kbEditing ? '✓ 完成' : '✏️ 编辑';
+  show($('#kbToolbar'), kbEditing);
+  show($('#kbEmojiPanel'), false);
+  show($('#kbContent'), kbEditing);
+  show($('#kbPreview'), !kbEditing);
+  $('#kbTitle').readOnly = !kbEditing;
+}
+$('#kbEditToggle').onclick = () => {
+  if (kbEditing) {
+    // 完成：先保存，再渲染回查看态
+    saveKbNow();
+    $('#kbPreview').innerHTML = renderMarkdown($('#kbContent').value);
+    setKbMode('view');
+  } else {
+    setKbMode('edit');
+    $('#kbContent').focus();
+  }
 };
+
+// ---------- 知识库文档权限管理（两步：选成员 → 选等级）----------
+let kbPermSelEmails = new Set();
+let kbPermAllEmails = [];
+function openKbPerm() {
+  if (!kbCurrent) return;
+  kbPermAllEmails = Object.keys(kbNameMap).filter((e) => e !== me).sort(); // 自己无需授权
+  const doc = kbDocs.find((d) => d.id === kbCurrent);
+  const cur = (doc && doc.perms) || {};
+  kbPermSelEmails = new Set(Object.keys(cur).filter((e) => cur[e] !== 'view' && e !== me)); // 预勾选已授权成员
+  $('#kbPermSearch').value = '';
+  renderKbPermList('');
+  show($('#kbPermStep2'), false);
+  show($('#kbPermStep1'), true);
+  show($('#kbPermModal'), true);
+}
+function renderKbPermList(q) {
+  const box = $('#kbPermList');
+  const ql = (q || '').trim().toLowerCase();
+  const rows = kbPermAllEmails.filter((e) => {
+    const nick = (kbNameMap[e] || e).toLowerCase();
+    return !ql || nick.includes(ql) || e.toLowerCase().includes(ql);
+  });
+  box.innerHTML = rows.length ? rows.map((e) =>
+    `<label class="kb-perm-row"><input type="checkbox" data-email="${escapeHtml(e)}" ${kbPermSelEmails.has(e) ? 'checked' : ''} /> <span class="kb-perm-nick">${escapeHtml(kbNameMap[e] || e)}</span><span class="kb-perm-mail">${escapeHtml(e)}</span></label>`
+  ).join('') : '<div class="empty">未找到匹配成员</div>';
+}
+$('#kbPermSearch').addEventListener('input', (e) => renderKbPermList(e.target.value));
+$('#kbPermList').addEventListener('change', (e) => {
+  const cb = e.target.closest('input[type=checkbox]');
+  if (!cb) return;
+  if (cb.checked) kbPermSelEmails.add(cb.dataset.email); else kbPermSelEmails.delete(cb.dataset.email);
+});
+$('#kbPermNext').onclick = () => {
+  if (!kbPermSelEmails.size) { alert('请先勾选至少一位成员'); return; }
+  $('#kbPermCount').textContent = kbPermSelEmails.size;
+  $('#kbPermSel').innerHTML = [...kbPermSelEmails].map((e) => `<span class="kb-perm-chip">${escapeHtml(kbNameMap[e] || e)}</span>`).join('');
+  show($('#kbPermStep1'), false);
+  show($('#kbPermStep2'), true);
+};
+$('#kbPermBack').onclick = () => { renderKbPermList($('#kbPermSearch').value); show($('#kbPermStep2'), false); show($('#kbPermStep1'), true); };
+$('#kbPermClose').onclick = () => show($('#kbPermModal'), false);
+$('#kbPermDone').onclick = async () => {
+  if (!kbCurrent || !kbPermSelEmails.size) return;
+  const lv = document.querySelector('input[name=kbPermLevel]:checked').value;
+  const perms = {};
+  kbPermSelEmails.forEach((e) => { perms[e] = lv; });
+  try {
+    const r = await api('PUT', `/api/kb/docs/${kbCurrent}/perms`, { perms });
+    const doc = kbDocs.find((d) => d.id === kbCurrent);
+    if (doc) doc.perms = r.perms || perms;
+    const canManage = myRole === 'admin' || (doc && doc.createdBy === me) || (doc && doc.perms && doc.perms[me] === 'manage');
+    const canEdit = canManage || (doc && doc.perms && doc.perms[me] === 'edit');
+    show($('#kbPermBtn'), canManage);
+    show($('#kbEditToggle'), canEdit);
+    $('#kbMoveFolder').disabled = !canEdit;
+    show($('#kbPermModal'), false);
+    flash('权限已保存');
+  } catch (e) { alert(e.message); }
+};
+$('#kbPermBtn').onclick = openKbPerm;
 function scheduleKbSave() {
   if (!kbCurrent) return;
   $('#kbSaveState').textContent = '编辑中…';
   clearTimeout(kbSaveTimer);
-  kbSaveTimer = setTimeout(async () => {
-    try {
-      await api('PUT', `/api/kb/docs/${kbCurrent}`, { title: $('#kbTitle').value, content: $('#kbContent').value });
-      $('#kbSaveState').textContent = `已保存 ${new Date().toTimeString().slice(0, 5)}`;
-      const d = kbDocs.find((x) => x.id === kbCurrent);
-      if (d) { d.title = $('#kbTitle').value.trim(); d.updatedAt = Date.now(); renderKbTree(); }
-    } catch (e) { $('#kbSaveState').textContent = '保存失败'; }
-  }, 800);
+  kbSaveTimer = setTimeout(saveKbNow, 800);
+}
+async function saveKbNow() {
+  if (!kbCurrent) return;
+  clearTimeout(kbSaveTimer);
+  try {
+    await api('PUT', `/api/kb/docs/${kbCurrent}`, { title: $('#kbTitle').value, content: $('#kbContent').value });
+    $('#kbSaveState').textContent = `已保存 ${new Date().toTimeString().slice(0, 5)}`;
+    const d = kbDocs.find((x) => x.id === kbCurrent);
+    if (d) { d.title = $('#kbTitle').value.trim(); d.updatedAt = Date.now(); renderKbTree(); }
+  } catch (e) { $('#kbSaveState').textContent = '保存失败'; }
 }
 $('#kbTitle').addEventListener('input', scheduleKbSave);
 $('#kbContent').addEventListener('input', scheduleKbSave);
 async function newKbDoc(folderId) {
-  try { const { doc } = await api('POST', '/api/kb/docs', { folderId: folderId || null }); await loadKb(); await selectKbDoc(doc.id); $('#kbTitle').focus(); }
+  try { const { doc } = await api('POST', '/api/kb/docs', { folderId: folderId || null }); await loadKb(); await selectKbDoc(doc.id); setKbMode('edit'); $('#kbTitle').focus(); }
   catch (e) { alert(e.message); }
 }
 $('#kbNewDoc').onclick = () => newKbDoc(null);
@@ -1133,6 +1223,15 @@ async function deleteKbDoc() {
   if (!kbCurrent || !confirm('确定删除这篇文档？')) return;
   try { await api('DELETE', `/api/kb/docs/${kbCurrent}`); kbCurrent = null; await loadKb(); }
   catch (e) { alert(e.message); }
+}
+async function toggleKbPin(id, isPinned) {
+  try {
+    await api('PUT', `/api/kb/docs/${id}/pin`, { pinned: !isPinned });
+    const d = kbDocs.find((x) => x.id === id);
+    if (d) d.pinned = !isPinned;
+    kbDocs = kbDocs.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+    renderKbTree();
+  } catch (e) { alert(e.message); }
 }
 async function deleteKbFolder(fid) {
   const isMine = kbFolders.find((f) => f.id === fid)?.createdBy === me;

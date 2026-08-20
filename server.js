@@ -77,6 +77,18 @@ function saveVotes() { writeJson(jf('votes.json'), votes); }
 function saveMoans() { writeJson(jf('moans.json'), moans); }
 function saveKb() { writeJson(jf('kb.json'), kb); }
 
+// 知识库文档权限：可管理(manage) > 可编辑(edit) > 仅查看(view，默认)。
+// 作者与管理员始终为「可管理」，不受 perms 影响。
+const KB_LEVELS = ['manage', 'edit', 'view'];
+function kbPermOf(doc, email) {
+  if (isAdmin(email) || doc.createdBy === email) return 'manage';
+  const lv = doc.perms && doc.perms[email];
+  return KB_LEVELS.includes(lv) ? lv : 'view';
+}
+function kbCanEdit(doc, email) { const lv = kbPermOf(doc, email); return lv === 'manage' || lv === 'edit'; }
+function kbCanManage(doc, email) { return kbPermOf(doc, email) === 'manage'; }
+
+
 // 今日日期（本地时区，YYYY-MM-DD）
 function todayStr() {
   const d = new Date(), p = (n) => String(n).padStart(2, '0');
@@ -630,7 +642,7 @@ async function requestHandler(req, res) {
 
       // ---- 团队知识库（Wiki：文件夹 + 文档 + 全文搜索）----
       if (p === '/api/kb' && method === 'GET') {
-        return sendJson(res, 200, { kb: { folders: kb.folders, docs: kb.docs.map((d) => ({ id: d.id, folderId: d.folderId, title: d.title, createdBy: d.createdBy, updatedBy: d.updatedBy, createdAt: d.createdAt, updatedAt: d.updatedAt })) } });
+        return sendJson(res, 200, { kb: { folders: kb.folders, docs: kb.docs.map((d) => ({ id: d.id, folderId: d.folderId, title: d.title, createdBy: d.createdBy, updatedBy: d.updatedBy, createdAt: d.createdAt, updatedAt: d.updatedAt, pinned: !!d.pinned })) } });
       }
       if (p === '/api/kb/search' && method === 'GET') {
         const q = (url.parse(req.url, true).query.q || '').trim().toLowerCase();
@@ -676,11 +688,42 @@ async function requestHandler(req, res) {
         const b = JSON.parse(await readBody(req) || '{}');
         if (b.folderId && !kb.folders.find((f) => f.id === b.folderId)) return sendJson(res, 400, { error: '文件夹不存在' });
         const title = (b.title || '').trim() || '未命名文档';
-        const doc = { id: crypto.randomUUID(), folderId: b.folderId || null, title, content: '', createdBy: me, updatedBy: me, createdAt: Date.now(), updatedAt: Date.now() };
+        const doc = { id: crypto.randomUUID(), folderId: b.folderId || null, title, content: '', createdBy: me, updatedBy: me, createdAt: Date.now(), updatedAt: Date.now(), perms: {}, pinned: false };
         kb.docs.push(doc); saveKb();
         return sendJson(res, 200, { doc: { id: doc.id, title: doc.title, folderId: doc.folderId } });
       }
       const kbd = p.match(/^\/api\/kb\/docs\/([^/]+)$/);
+      // ---- 文档置顶（仅管理员）----
+      const kbpin = p.match(/^\/api\/kb\/docs\/([^/]+)\/pin$/);
+      if (kbpin && method === 'PUT') {
+        const doc = kb.docs.find((d) => d.id === kbpin[1]);
+        if (!doc) return sendJson(res, 404, { error: '文档不存在' });
+        if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可置顶' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        doc.pinned = !!b.pinned;
+        saveKb();
+        return sendJson(res, 200, { ok: true, pinned: doc.pinned });
+      }
+      // ---- 文档权限设置（可管理/可编辑/仅查看）----
+      const kbp = p.match(/^\/api\/kb\/docs\/([^/]+)\/perms$/);
+      if (kbp && method === 'PUT') {
+        const doc = kb.docs.find((d) => d.id === kbp[1]);
+        if (!doc) return sendJson(res, 404, { error: '文档不存在' });
+        if (!kbCanManage(doc, me)) return sendJson(res, 403, { error: '仅作者/管理员/可管理成员可设置权限' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        const perms = {};
+        if (b.perms && typeof b.perms === 'object') {
+          for (const [email, lv] of Object.entries(b.perms)) {
+            if (!KB_LEVELS.includes(lv)) continue;
+            if (!users.find((u) => u.email === email)) continue; // 仅限平台成员
+            perms[email] = lv;
+          }
+        }
+        doc.perms = perms;
+        doc.updatedBy = me; doc.updatedAt = Date.now();
+        saveKb();
+        return sendJson(res, 200, { ok: true, perms: doc.perms });
+      }
       if (kbd && method === 'GET') {
         const doc = kb.docs.find((d) => d.id === kbd[1]);
         if (!doc) return sendJson(res, 404, { error: '文档不存在' });
@@ -689,6 +732,7 @@ async function requestHandler(req, res) {
       if (kbd && method === 'PUT') {
         const doc = kb.docs.find((d) => d.id === kbd[1]);
         if (!doc) return sendJson(res, 404, { error: '文档不存在' });
+        if (!kbCanEdit(doc, me)) return sendJson(res, 403, { error: '无权编辑该文档（仅可查看）' });
         const b = JSON.parse(await readBody(req) || '{}');
         if (b.title !== undefined) { const t = String(b.title).trim(); if (!t) return sendJson(res, 400, { error: '标题不能为空' }); doc.title = t.slice(0, 200); }
         if (b.content !== undefined) { if (String(b.content).length > 100000) return sendJson(res, 400, { error: '内容过长' }); doc.content = String(b.content); }

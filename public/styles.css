@@ -332,6 +332,8 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .vote-tip { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
 .vote-opts .vote-opt-input { margin-bottom: 8px; }
 .modal-foot { margin-top: 18px; }
+/* 退出加密任务弹窗：取消按钮居中，与下方"退出并切换"间隔 20px（仅该弹窗） */
+#exitModal .modal-foot { display: flex; flex-direction: column; align-items: center; gap: 20px; }
 
 /* ---------- 团队知识库 ---------- */
 .kb-body { flex: 1; display: flex; gap: 14px; min-height: 0; padding: 18px 22px; }
@@ -352,6 +354,10 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .kb-doc.active { background: var(--primary); color: #fff; }
 .kb-doc-t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-doc-time { font-size: 11px; opacity: .7; flex-shrink: 0; }
+.kb-pin { border: 0; background: transparent; cursor: pointer; font-size: 12px; padding: 0 2px; opacity: .55; border-radius: 4px; line-height: 1; flex-shrink: 0; }
+.kb-pin:hover { opacity: 1; background: var(--panel-2); }
+.kb-pin-static { cursor: default; opacity: .7; }
+.kb-doc.kb-pinned .kb-doc-t { color: var(--primary); font-weight: 600; }
 .kb-del { width: 18px; height: 18px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 50%; font-size: 11px; flex-shrink: 0; }
 .kb-del:hover { background: rgba(0, 0, 0, .1); color: #d33; }
 .kb-editor { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); overflow: hidden; }
@@ -360,7 +366,8 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .kb-title { border: 0; outline: none; font-size: 19px; font-weight: 500; padding: 16px 20px 6px; background: transparent; color: var(--text); }
 .kb-meta { display: flex; align-items: center; gap: 12px; padding: 0 20px 10px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
 .kb-save-state { color: var(--primary); }
-.kb-meta .btn-ghost { padding: 3px 10px; font-size: 12px; margin-left: auto; }
+.kb-meta-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.kb-meta-actions .btn-ghost { padding: 3px 10px; font-size: 12px; }
 .kb-content { flex: 1; border: 0; outline: none; resize: none; padding: 14px 20px; background: transparent; color: var(--text); font-size: 14px; line-height: 1.8; font-family: inherit; min-height: 0; }
 .kb-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; position: relative; }
 .kb-fmt { min-width: 30px; height: 28px; padding: 0 8px; border: 1px solid transparent; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text); font-size: 13px; }
@@ -383,6 +390,19 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .kb-preview img { max-width: 100%; border-radius: 10px; margin: 4px 0; }
 .kb-preview a { color: var(--primary); }
 .kb-preview hr { border: 0; border-top: 1px dashed var(--border); margin: 14px 0; }
+
+/* 知识库文档权限管理弹窗 */
+.kb-perm-list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.kb-perm-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13.5px; }
+.kb-perm-row:hover { background: var(--panel-2); }
+.kb-perm-row input { accent-color: var(--primary); }
+.kb-perm-nick { font-weight: 500; }
+.kb-perm-mail { color: var(--muted); font-size: 12px; }
+.kb-perm-sel { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.kb-perm-chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; }
+.kb-perm-levels { display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; margin-top: 8px; }
+.kb-perm-levels label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.kb-perm-levels input { accent-color: var(--primary); }
 
 /* ---------- 意见反馈 ---------- */
 .moan-input { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }

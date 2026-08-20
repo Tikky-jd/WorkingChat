@@ -322,9 +322,13 @@
             <span id="kbInfo">—</span>
             <label class="kb-move">位置：<select id="kbMoveFolder" class="kb-folder-sel"></select></label>
             <span id="kbSaveState" class="kb-save-state"></span>
-            <button id="kbDeleteDoc" class="btn-ghost hidden" data-act="delkbdoc">删除文档</button>
+            <span class="kb-meta-actions">
+              <button id="kbPermBtn" class="btn-ghost hidden">🔐 权限管理</button>
+              <button id="kbEditToggle" class="btn-ghost">✏️ 编辑</button>
+              <button id="kbDeleteDoc" class="btn-ghost hidden" data-act="delkbdoc">删除文档</button>
+            </span>
           </div>
-          <div class="kb-toolbar">
+          <div id="kbToolbar" class="kb-toolbar">
             <button class="kb-fmt" data-fmt="bold" title="加粗"><b>B</b></button>
             <button class="kb-fmt" data-fmt="italic" title="斜体"><i>I</i></button>
             <button class="kb-fmt" data-fmt="h2" title="二级标题">H2</button>
@@ -336,8 +340,6 @@
             <span class="kb-tool-sep"></span>
             <button data-act="kbimg" title="插入图片">🖼 图片</button>
             <button data-act="kbemoji" title="插入表情">😀</button>
-            <span class="kb-tool-sep"></span>
-            <label class="kb-preview-toggle"><input type="checkbox" id="kbPreviewMode" /> 预览</label>
           </div>
           <div id="kbEmojiPanel" class="kb-emoji-panel hidden"></div>
           <div class="kb-edit-wrap">
@@ -435,6 +437,35 @@
       <div class="modal-foot">
         <button id="exitCancel" class="btn-ghost">取消</button>
         <button id="exitConfirm" class="btn-primary">退出并切换</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 知识库文档权限管理（两步：选成员 → 选权限等级） -->
+  <div id="kbPermModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3>🔐 文档权限管理</h3><button id="kbPermClose" class="btn-ghost">✕</button></div>
+      <div id="kbPermStep1">
+        <p class="modal-label">按名字搜索成员并多选（未授权的成员默认「仅查看」）</p>
+        <input id="kbPermSearch" class="input" placeholder="输入昵称 / 邮箱搜索…" />
+        <div id="kbPermList" class="kb-perm-list"></div>
+        <div class="modal-foot">
+          <button id="kbPermNext" class="btn-primary">下一步</button>
+        </div>
+      </div>
+      <div id="kbPermStep2" class="hidden">
+        <p class="modal-label">已选成员（<span id="kbPermCount">0</span> 人）</p>
+        <div id="kbPermSel" class="kb-perm-sel"></div>
+        <p class="modal-label">选择权限等级（高 → 低）</p>
+        <div class="kb-perm-levels">
+          <label><input type="radio" name="kbPermLevel" value="manage" /> 可管理（编辑 + 权限管理）</label>
+          <label><input type="radio" name="kbPermLevel" value="edit" /> 可编辑（仅编辑内容）</label>
+          <label><input type="radio" name="kbPermLevel" value="view" checked /> 仅查看（只读，默认）</label>
+        </div>
+        <div class="modal-foot">
+          <button id="kbPermBack" class="btn-ghost">上一步</button>
+          <button id="kbPermDone" class="btn-primary">完成</button>
+        </div>
       </div>
     </div>
   </div>

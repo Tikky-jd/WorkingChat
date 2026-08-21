@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>协作台 · 企业团队私有协作空间</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='14' fill='%232563eb'/%3E%3Crect x='16' y='18' width='32' height='5' rx='2.5' fill='white' opacity='0.95'/%3E%3Crect x='16' y='29' width='22' height='5' rx='2.5' fill='white' opacity='0.8'/%3E%3Crect x='16' y='40' width='28' height='5' rx='2.5' fill='white' opacity='0.65'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="./styles.css?v=20260821j" />
+  <link rel="stylesheet" href="./styles.css?v=20260821s" />
 </head>
 <body data-theme="blue">
   <div id="bgLayer"></div>
@@ -187,6 +187,8 @@
           <span class="panel-ico">🤖</span>
           <span class="panel-name">AI任务区</span>
           <span id="roomTitle" class="panel-sub">请选择左侧任务</span>
+          <span id="talismanNotice" class="talisman-notice hidden"></span>
+          <button id="talismanLogBtn" class="talisman-log-btn" title="道具使用记录">📜</button>
           <div id="onlineDots" class="online-dots" title="在线人数"></div>
           <button id="openTheme" class="btn-ghost panel-act">🎨 外观</button>
         </header>
@@ -270,15 +272,10 @@
       <h2>个人中心</h2>
       <span class="page-sub">我的资料 · 签到任务 · 灵石商城</span>
     </header>
-    <div class="me-tabs">
-      <button class="me-tab active" data-me="profile">👤 个人资料</button>
-      <button class="me-tab" data-me="tasks">📅 签到与任务</button>
-      <button class="me-tab" data-me="shop">🛒 商城与灵石</button>
-    </div>
     <div class="page-body me-body">
       <div id="meProfile" class="me-pane"></div>
-      <div id="meTasks" class="me-pane hidden"></div>
-      <div id="meShop" class="me-pane hidden"></div>
+      <div id="meTasks" class="me-pane"></div>
+      <div id="meShop" class="me-pane"></div>
     </div>
   </section>
 
@@ -480,6 +477,28 @@
     </div>
   </div>
 
+  <!-- 商城购买弹窗（目标型商品：选成员 + 输入内容） -->
+  <div id="shopBuyModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3 id="shopBuyTitle">选择成员</h3><button id="shopBuyClose" class="btn-ghost">✕</button></div>
+      <p class="modal-label" id="shopBuyHint"></p>
+      <select id="shopBuyTarget" class="input"></select>
+      <input id="shopBuyText" class="input hidden" placeholder="" maxlength="200" />
+      <div class="modal-foot">
+        <button id="shopBuyOk" class="btn-primary">确认购买</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 道具使用记录弹窗 -->
+  <div id="talismanLogModal" class="modal hidden">
+    <div class="modal-card wide">
+      <div class="modal-head"><h3>📜 道具使用记录</h3><button id="talismanLogClose" class="btn-ghost">✕</button></div>
+      <p class="modal-label">最近的道具 / 符使用明细（实时记录，最多 100 条）</p>
+      <div id="talismanLogList" class="talisman-log-list"><div class="empty">加载中…</div></div>
+    </div>
+  </div>
+
   <!-- 消息右键操作菜单 -->
   <div id="msgMenu" class="ctx-menu hidden">
     <button id="ctxRecall" class="ctx-item">撤回消息</button>
@@ -510,6 +529,6 @@
   </div>
 
   <script src="./config.js?v=20260821b"></script>
-  <script src="./app.js?v=20260821j"></script>
+  <script src="./app.js?v=20260821s"></script>
 </body>
 </html>

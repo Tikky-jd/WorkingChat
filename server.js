@@ -46,7 +46,17 @@ ensureDirs();
 function readJson(file, def) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return def; }
 }
-function writeJson(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2)); }
+function writeJson(file, data) {
+  const s = JSON.stringify(data, null, 2);
+  // Windows 下偶发文件锁定（杀软/索引/其它进程）会抛 EPERM/EACCES，重试几次避免请求直接崩
+  for (let i = 0; i < 4; i++) {
+    try { fs.writeFileSync(file, s); return; }
+    catch (e) {
+      if (i === 3) { console.error('[writeJson] 写入失败', file, e.code, e.message); return; }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60 * (i + 1));
+    }
+  }
+}
 function jf(name) { return path.join(DATA_DIR, name); }
 
 let users = readJson(jf('users.json'), []);
@@ -62,6 +72,7 @@ let votes = readJson(jf('votes.json'), []);   // 团队投票 { id, title, optio
 let moans = readJson(jf('moans.json'), []);   // 匿名树洞 { id, text, time }（不记录作者，纯匿名）
 let kb = readJson(jf('kb.json'), { folders: [], docs: [] }); // 团队知识库 { folders:[{id,name,parent}], docs:[{id,folderId,title,content,createdBy,updatedBy,createdAt,updatedAt}] }
 let media = readJson(jf('media.json'), []); // 平台媒体库 { id,name,type,ext,size,path,uploadedBy,createdAt }
+let talismanLog = readJson(jf('talisman_log.json'), []); // 道具/符使用记录 { id, text, by, item, time }（最多 100 条）
 // 启动时清理过期 token
 for (const k in sessions) if (sessions[k] && sessions[k].exp && sessions[k].exp < Date.now()) delete sessions[k];
 
@@ -78,6 +89,7 @@ function saveVotes() { writeJson(jf('votes.json'), votes); }
 function saveMoans() { writeJson(jf('moans.json'), moans); }
 function saveKb() { writeJson(jf('kb.json'), kb); }
 function saveMedia() { writeJson(jf('media.json'), media); }
+function saveTalismanLog() { writeJson(jf('talisman_log.json'), talismanLog); }
 
 // 知识库文档权限：可管理(manage) > 可编辑(edit) > 仅查看(view，默认)。
 // 作者与管理员始终为「可管理」，不受 perms 影响。
@@ -99,7 +111,7 @@ function todayStr() {
 // 跨天则重置在线时长累计
 function ensureStatsDate() {
   const t = todayStr();
-  if (stats.date !== t) { stats.date = t; stats.onlineSec = {}; stats.lastTs = {}; }
+  if (stats.date !== t) { stats.date = t; stats.onlineSec = {}; stats.lastTs = {}; stats.stoneTick = {}; }
 }
 
 // 种子管理员（邮箱登录）。生产请用 ADMIN_PASS 环境变量覆盖默认弱口令。
@@ -138,7 +150,24 @@ const TITLES = [
   { t: '练气', min: 0 },
 ];
 function titleOf(score) { return (TITLES.find((x) => score >= x.min) || TITLES[TITLES.length - 1]).t; }
+// 称号索引（0=最高「真神」，数值越大越低阶）
+function titleIdx(score) {
+  let i = TITLES.findIndex((x) => score >= x.min);
+  if (i < 0) i = TITLES.length - 1;
+  return i;
+}
+// 爆血符：在真实称号基础上提升 boost 级（活跃分不变，仅称号提升）
+function titleOfBoosted(score, boost) {
+  const i = Math.max(0, titleIdx(score) - (boost || 0));
+  return TITLES[i].t;
+}
 function nickOf(email) { const u = users.find((x) => x.email === email); return u ? u.nickname : email; }
+
+// 噤声符：email -> 禁言截止时间戳（内存态，重启失效）
+const mutedUntil = new Map();
+function mutedRemain(email) { const t = mutedUntil.get(email); if (t && t > Date.now()) return t - Date.now(); mutedUntil.delete(email); return 0; }
+// 迷魂符：email -> { text, by }（目标下一条消息内容被替换）
+const voodooMsgs = new Map();
 
 // ===== 灵石体系：极品(jp) > 上品(sp) > 中品(zp) > 下品(xp)，低→高 1:100 兑换 =====
 const SPIRIT_ORDER = ['xp', 'zp', 'sp', 'jp']; // 从低到高
@@ -163,11 +192,17 @@ const DAILY_TASKS = [
   { id: 't5', title: '协作完成', desc: '完成一次别人布置的任务（需发布者确认）' },
 ];
 
-// 商城（灵石购买）
+// 商城（灵石购买）。target 型商品购买时前端需附带目标成员邮箱 target 与可选内容（slogan/text/title2）
 const SHOP_ITEMS = [
-  { id: 'rename', name: '改名卡', icon: '🪪', desc: '解锁一次自由修改昵称的机会（不再强制「x包」）', price: 50, unit: 'xp' },
-  { id: 'title', name: '个性称号', icon: '🏅', desc: '为自己定制专属称号，展示在名字旁', price: 100, unit: 'xp' },
-  { id: 'frame', name: '鎏金头像框', icon: '🖼️', desc: '永久解锁鎏金头像框，金光闪闪', price: 200, unit: 'xp' },
+  { id: 'rename', name: '改名卡', icon: '🪪', desc: '解锁一次自由修改昵称的机会（不再强制「x包」）', price: 50, unit: 'xp', kind: 'self' },
+  { id: 'title', name: '个性称号', icon: '🏅', desc: '为自己定制专属称号，展示在名字旁', price: 100, unit: 'xp', kind: 'self' },
+  { id: 'frame', name: '鎏金头像框', icon: '🖼️', desc: '永久解锁鎏金头像框，金光闪闪', price: 200, unit: 'xp', kind: 'self' },
+  { id: 'glow', name: '鎏金光效', icon: '✨', desc: '今日活跃榜中自己的条目获得金色流动边框光效，有效期 3 天', price: 1, unit: 'zp', kind: 'self' },
+  { id: 'mute', name: '噤声符', icon: '🤐', desc: '禁言任意一位成员 3 分钟（期间无法发送消息）', price: 1, unit: 'zp', kind: 'target' },
+  { id: 'voodoo', name: '迷魂符', icon: '🌀', desc: '让指定成员发送的下一条消息内容，变为你输入的消息', price: 80, unit: 'xp', kind: 'target' },
+  { id: 'baoxue', name: '爆血符', icon: '💥', desc: '活跃积分不变，称号直接强升下一等级（可叠加）', price: 20, unit: 'xp', kind: 'self' },
+  { id: 'nisheng', name: '拟声符', icon: '📝', desc: '修改任意一位成员的个人签名（对方下次改自己签名需 50 下品）', price: 100, unit: 'xp', kind: 'target' },
+  { id: 'xuehun', name: '血魂符', icon: '🩸', desc: '仅可对同阶或更低阶成员使用，修改其个性称号（显示在消息昵称旁）', price: 1, unit: 'jp', kind: 'target' },
 ];
 
 function ensureUser(u) {
@@ -181,6 +216,9 @@ function ensureUser(u) {
   if (typeof u.renameCards !== 'number') u.renameCards = 0;
   if (!u.title2) u.title2 = '';
   if (!u.avatarFrame) u.avatarFrame = '';
+  if (!u.slogan) u.slogan = '';
+  if (typeof u.titleBoost !== 'number') u.titleBoost = 0;
+  if (!u.glowUntil) u.glowUntil = 0;
   return u;
 }
 function ymStr(d) { const x = d || new Date(); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; }
@@ -435,9 +473,11 @@ async function requestHandler(req, res) {
         return sendJson(res, 200, {
           email: e, nickname: u.nickname, role: u.role,
           profile: u.profile || {}, spirit: u.spirit || newSpirit(), bonus: u.bonus || 0,
-          score: scoreOf(u), title: titleOf(scoreOf(u)),
+          score: scoreOf(u), title: titleOfBoosted(scoreOf(u), u.titleBoost || 0), titleBoost: u.titleBoost || 0,
+          slogan: u.slogan || '', glow: (u.glowUntil || 0) > Date.now(), glowUntil: u.glowUntil || 0,
           renameCards: u.renameCards || 0, title2: u.title2 || '', avatarFrame: u.avatarFrame || '',
           createdAt: u.createdAt, newbieDone: newbieDone(u), newbieLocked: newbieLocked(u),
+          newbieClaimed: !!(u.tasks && u.tasks.newbie && u.tasks.newbie.claimed),
           signinDates: signinDates(u), signedToday: signinDates(u).includes(todayNum()),
           daily: DAILY_TASKS.map((t) => {
             const key = `${today}:${t.id}`;
@@ -478,8 +518,17 @@ async function requestHandler(req, res) {
         if (b.married !== undefined && b.married !== null && b.married !== '') u.profile.married = String(b.married) === 'true';
         else if (b.married === null || b.married === '') u.profile.married = null;
         if (b.title2 !== undefined) u.title2 = String(b.title2).trim().slice(0, 12);
+        // 个人签名：修改需 50 下品灵石（首次设置/修改均收费；内容未变则不扣）
+        if (b.slogan !== undefined) {
+          const sl = String(b.slogan).trim().slice(0, 30);
+          if (sl !== (u.slogan || '')) {
+            if ((u.spirit.xp || 0) < 50) return sendJson(res, 400, { error: '灵石不足：修改个人签名需要 50 枚下品灵石' });
+            u.spirit.xp -= 50;
+            u.slogan = sl;
+          }
+        }
         saveUsers();
-        return sendJson(res, 200, { ok: true, nickname: u.nickname, renameCards: u.renameCards, profile: u.profile, title2: u.title2 });
+        return sendJson(res, 200, { ok: true, nickname: u.nickname, renameCards: u.renameCards, profile: u.profile, title2: u.title2, slogan: u.slogan || '', spirit: u.spirit });
       }
 
       // ---- 个人中心：每日签到（每月一次，+5 活跃积分 +10 下品灵石）----
@@ -570,7 +619,7 @@ async function requestHandler(req, res) {
         const me2 = currentUser(req);
         if (!me2) return sendJson(res, 401, { error: '未登录' });
         const u = ensureUser(users.find((x) => x.email === me2));
-        const owned = { rename: (u.renameCards || 0) > 0, title: !!(u.title2 && u.title2 !== ''), frame: !!(u.avatarFrame && u.avatarFrame !== '') };
+        const owned = { rename: (u.renameCards || 0) > 0, title: !!(u.title2 && u.title2 !== ''), frame: !!(u.avatarFrame && u.avatarFrame !== ''), glow: (u.glowUntil || 0) > Date.now(), baoxue: (u.titleBoost || 0) > 0 };
         return sendJson(res, 200, { spirit: u.spirit, items: SHOP_ITEMS, owned });
       }
       // 购买商品（灵石扣减）
@@ -583,15 +632,83 @@ async function requestHandler(req, res) {
         if (!item) return sendJson(res, 404, { error: '商品不存在' });
         if ((u.spirit[item.unit] || 0) < item.price) return sendJson(res, 400, { error: `灵石不足：需要 ${item.price} 枚${SPIRIT_NAMES[item.unit]}` });
         const b = JSON.parse(await readBody(req) || '{}');
-        u.spirit[item.unit] -= item.price;
-        if (item.id === 'rename') u.renameCards = (u.renameCards || 0) + 1;
-        else if (item.id === 'title') {
+        u.spirit[item.unit] -= item.price; // 扣款
+        let talismanNotify = ''; // 符类生效时的全局通知文本
+        // 需要目标成员的校验
+        const findTarget = () => {
+          const tEmail = String(b.target || '').trim().toLowerCase();
+          const t = users.find((x) => x.email === tEmail);
+          if (!t) return null;
+          return ensureUser(t);
+        };
+        if (item.id === 'rename') {
+          u.renameCards = (u.renameCards || 0) + 1;
+        } else if (item.id === 'title') {
           const t2 = (b.title2 || '').trim().slice(0, 12);
           if (!t2) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '请输入称号内容' }); }
           u.title2 = t2;
-        } else if (item.id === 'frame') u.avatarFrame = 'gold';
+        } else if (item.id === 'frame') {
+          u.avatarFrame = 'gold';
+        } else if (item.id === 'glow') {
+          // 鎏金光效：3 天金色流动边框（可叠加续期）
+          const base = (u.glowUntil || 0) > Date.now() ? (u.glowUntil || 0) : Date.now();
+          u.glowUntil = base + 3 * 86400000;
+          talismanNotify = `「${nickOf(me2)}」使用了鎏金光效`;
+        } else if (item.id === 'mute') {
+          // 噤声符：禁言目标 3 分钟
+          const t = findTarget();
+          if (!t) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '目标成员不存在' }); }
+          mutedUntil.set(t.email, Date.now() + 3 * 60000);
+          talismanNotify = `「${nickOf(me2)}」对「${nickOf(t.email)}」使用了噤声符`;
+        } else if (item.id === 'voodoo') {
+          // 迷魂符：目标下一条消息内容被替换
+          const t = findTarget();
+          if (!t) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '目标成员不存在' }); }
+          const vt = (b.text || '').trim().slice(0, MAX_TEXT);
+          if (!vt) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '请输入要替换的消息内容' }); }
+          voodooMsgs.set(t.email, { text: vt, by: me2 });
+          talismanNotify = `「${nickOf(me2)}」对「${nickOf(t.email)}」使用了迷魂符`;
+        } else if (item.id === 'baoxue') {
+          // 爆血符：称号强升下一等级（活跃分不变）
+          u.titleBoost = (u.titleBoost || 0) + 1;
+          talismanNotify = `「${nickOf(me2)}」使用了爆血符`;
+        } else if (item.id === 'nisheng') {
+          // 拟声符：修改任意成员的个人签名
+          const t = findTarget();
+          if (!t) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '目标成员不存在' }); }
+          const sl = (b.slogan || '').trim().slice(0, 30);
+          if (!sl) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '请输入签名内容' }); }
+          t.slogan = sl;
+          talismanNotify = `「${nickOf(me2)}」对「${nickOf(t.email)}」使用了拟声符`;
+        } else if (item.id === 'xuehun') {
+          // 血魂符：仅可对同阶或更低阶成员，修改其个性称号
+          const t = findTarget();
+          if (!t) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '目标成员不存在' }); }
+          const myIdx = titleIdx(scoreOf(u)), tIdx = titleIdx(scoreOf(t));
+          if (tIdx < myIdx) { u.spirit[item.unit] += item.price; return sendJson(res, 403, { error: '血魂符只能对同阶或更低阶成员使用' }); }
+          const t2 = (b.title2 || '').trim().slice(0, 12);
+          if (!t2) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '请输入要设置的称号' }); }
+          t.title2 = t2;
+          talismanNotify = `「${nickOf(me2)}」对「${nickOf(t.email)}」使用了血魂符`;
+        } else {
+          u.spirit[item.unit] += item.price;
+          return sendJson(res, 404, { error: '商品不存在' });
+        }
         saveUsers();
-        return sendJson(res, 200, { ok: true, spirit: u.spirit, renameCards: u.renameCards, title2: u.title2, avatarFrame: u.avatarFrame });
+        // 符类生效 → 记录日志（可查询）并全局广播，前端在 AI任务区 Header 绿色圆左侧展示
+        if (talismanNotify) {
+          talismanLog.push({ id: crypto.randomUUID(), text: talismanNotify, by: me2, item: item.id, time: Date.now() });
+          if (talismanLog.length > 100) talismanLog = talismanLog.slice(-100);
+          saveTalismanLog();
+          pushAll({ type: 'talisman', text: talismanNotify });
+        }
+        return sendJson(res, 200, { ok: true, spirit: u.spirit, renameCards: u.renameCards, title2: u.title2, avatarFrame: u.avatarFrame, titleBoost: u.titleBoost, glowUntil: u.glowUntil, slogan: u.slogan || '' });
+      }
+      // ---- 道具/符使用记录查询（最新在前）----
+      if (p === '/api/talisman/log' && method === 'GET') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        return sendJson(res, 200, { log: talismanLog.slice().reverse() });
       }
 
       // 外观配置为公开（无登录也可读，供首页展示团队定制背景）
@@ -683,14 +800,21 @@ async function requestHandler(req, res) {
         const room = rooms.find((r) => r.id === roomId);
         if (!room) return sendJson(res, 404, { error: '任务不存在' });
         if (!canAccessRoom(room, me)) return sendJson(res, 403, { error: '该任务已加密，请输入密码' });
+        // 噤声符：禁言期间禁止发送
+        const remain = mutedRemain(me);
+        if (remain > 0) return sendJson(res, 403, { error: `你已被噤声符禁言，剩余 ${Math.ceil(remain / 1000)} 秒` });
         const b = JSON.parse(await readBody(req) || '{}');
-        const text = (b.text || '').trim();
+        let text = (b.text || '').trim();
+        // 迷魂符：目标的下一条消息内容被替换为迷魂文本（以目标身份发出）
+        const vd = voodooMsgs.get(me);
+        if (vd) { text = vd.text; voodooMsgs.delete(me); }
         if (text.length > MAX_TEXT) return sendJson(res, 400, { error: '消息文字过长' });
         let image = null;
-        if (b.image) { try { image = saveDataUrl(b.image, 'msg'); } catch (e) { return sendJson(res, 400, { error: e.message }); } }
+        if (!vd && b.image) { try { image = saveDataUrl(b.image, 'msg'); } catch (e) { return sendJson(res, 400, { error: e.message }); } }
         if (!text && !image) return sendJson(res, 400, { error: '消息不能为空' });
+        const sender = users.find((x) => x.email === me) || {};
         const msg = {
-          id: crypto.randomUUID(), roomId, user: me, nickname: nickOf(me),
+          id: crypto.randomUUID(), roomId, user: me, nickname: nickOf(me), title2: sender.title2 || '',
           type: image ? (text ? 'mixed' : 'image') : 'text',
           text: text || null, image, time: Date.now(),
         };
@@ -739,6 +863,17 @@ async function requestHandler(req, res) {
             stats.lastTs[me] = now;
             saveStats();
           }
+        }
+        // 每在线 10 分钟自动发放 10 下品灵石（按当日累计在线时长分档，跨天随 stats 重置）
+        const total = stats.onlineSec[me] || 0;
+        const tick = Math.floor(total / 600000);
+        if (!stats.stoneTick) stats.stoneTick = {};
+        const granted = stats.stoneTick[me] || 0;
+        if (tick > granted) {
+          const u = ensureUser(users.find((x) => x.email === me));
+          u.spirit.xp = (u.spirit.xp || 0) + (tick - granted) * 10;
+          stats.stoneTick[me] = tick;
+          saveUsers(); saveStats();
         }
         presence.set(me, { roomId: b.roomId || null, ts: now });
         const rid = b.roomId;
@@ -790,9 +925,9 @@ async function requestHandler(req, res) {
           const ms = msgs[u.email] || 0, dn = dones[u.email] || 0;
           // onlineSec 单位为毫秒：÷60000 转分钟，在线每分钟=1分（在线10分钟=10分）；每条消息=1分；另加签到/任务奖励分 bonus
           const score = Math.round(onlineSec / 60000) + ms + (u.bonus || 0);
-          const title = titleOf(score);
+          const title = titleOfBoosted(score, u.titleBoost || 0); // 爆血符可提升称号
           const st = presence.get(u.email);
-          return { nickname: u.nickname, email: u.email, role: u.role, online: !!(st && now - st.ts < 15000), onlineSec, msgs: ms, done: dn, score, title, title2: u.title2 || '', avatarFrame: u.avatarFrame || '', avatar: (u.profile && u.profile.avatar) || '' };
+          return { nickname: u.nickname, email: u.email, role: u.role, online: !!(st && now - st.ts < 15000), onlineSec, msgs: ms, done: dn, score, title, title2: u.title2 || '', slogan: u.slogan || '', glow: (u.glowUntil || 0) > now, avatarFrame: u.avatarFrame || '', avatar: (u.profile && u.profile.avatar) || '' };
         });
         list.sort((a, b) => b.score - a.score);
         return sendJson(res, 200, { rank: list });

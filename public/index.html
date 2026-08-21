@@ -6,14 +6,14 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob: https:; connect-src 'self' https:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'" />
   <title>协作台 · 企业团队私有协作空间</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='14' fill='%232563eb'/%3E%3Crect x='16' y='18' width='32' height='5' rx='2.5' fill='white' opacity='0.95'/%3E%3Crect x='16' y='29' width='22' height='5' rx='2.5' fill='white' opacity='0.8'/%3E%3Crect x='16' y='40' width='28' height='5' rx='2.5' fill='white' opacity='0.65'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=20260821a" />
 </head>
 <body data-theme="blue">
   <div id="bgLayer"></div>
   <div id="bgTint"></div>
 
-  <!-- 首页 / 落地页 -->
-  <div id="home" class="home hidden">
+  <!-- 首页 / 落地页（默认可见，避免 JS 未就绪时白屏；登录后由 app.js 隐藏） -->
+  <div id="home" class="home">
     <header class="nav">
       <div class="nav-inner">
         <div class="nav-logo"><span class="nav-mark"></span>协作台</div>
@@ -149,6 +149,8 @@
 
   <!-- 应用 -->
   <div id="app" class="app hidden">
+    <button id="sideToggle" class="side-toggle" title="展开/收起侧栏">☰ 协作态</button>
+    <div id="sideBackdrop" class="side-backdrop hidden"></div>
     <aside class="sidebar">
       <div class="side-head">
         <span class="logo">◆ 协作台</span>
@@ -165,14 +167,22 @@
     <div class="grid">
       <!-- 功能入口 -->
       <div class="feature-bar">
-        <button class="feat-card" data-act="view" data-view="daily"><span class="feat-ico">📋</span><b>工作日报</b><i>一键生成今日总结</i></button>
+        <button class="feat-card" data-act="view" data-view="media"><span class="feat-ico">🎬</span><b>媒体管理</b><i>视频/音频库 · 站内播放</i></button>
         <button class="feat-card" data-act="view" data-view="vote"><span class="feat-ico">🗳</span><b>团队投票</b><i>内部投票 · 结果实时</i></button>
         <button class="feat-card" data-act="view" data-view="moan"><span class="feat-ico">📨</span><b>意见反馈</b><i>员工心声 · 匿名提交</i></button>
         <button class="feat-card" data-act="view" data-view="kb"><span class="feat-ico">📚</span><b>团队知识库</b><i>知识沉淀 · 全员协作</i></button>
       </div>
 
+      <!-- 移动端面板切换（桌面端隐藏，点哪个放大哪个） -->
+      <div class="panel-tabs">
+        <button class="ptab active" data-panel="chat">🤖 任务区</button>
+        <button class="ptab" data-panel="todo">✅ 代办</button>
+        <button class="ptab" data-panel="notes">📝 备注</button>
+        <button class="ptab" data-panel="people">👥 活跃</button>
+      </div>
+
       <!-- 面板1：AI任务区 -->
-      <section class="panel panel-chat">
+      <section class="panel panel-chat" data-panel="chat">
         <header class="panel-head">
           <span class="panel-ico">🤖</span>
           <span class="panel-name">AI任务区</span>
@@ -214,7 +224,7 @@
       </section>
 
       <!-- 面板2：代办清单区 -->
-      <section class="panel panel-todo">
+      <section class="panel panel-todo" data-panel="todo">
         <header class="panel-head">
           <span class="panel-ico">✅</span>
           <span class="panel-name">代办清单</span>
@@ -230,7 +240,7 @@
       </section>
 
       <!-- 面板3：备注区 -->
-      <section class="panel panel-notes">
+      <section class="panel panel-notes" data-panel="notes">
         <header class="panel-head">
           <span class="panel-ico">📝</span>
           <span class="panel-name">备注</span>
@@ -240,7 +250,7 @@
       </section>
 
       <!-- 面板4：今日活跃榜（人员管理 · 仅展示） -->
-      <section class="panel panel-people">
+      <section class="panel panel-people" data-panel="people">
         <header class="panel-head">
           <span class="panel-ico">👥</span>
           <span class="panel-name">今日活跃</span>
@@ -253,21 +263,16 @@
     </div>
   </div>
 
-  <!-- 页面：工作日报生成器 -->
-  <section id="page-daily" class="page hidden">
+  <!-- 页面：媒体管理（原工作日报板块改造） -->
+  <section id="page-media" class="page hidden">
     <header class="page-head">
       <button class="btn-ghost" data-act="view" data-view="main">← 返回工作台</button>
-      <h2>工作日报</h2>
-      <span class="page-sub">弹窗选择任务 → 一键生成日报 → 复制发群</span>
+      <h2>媒体管理</h2>
+      <span class="page-sub">上传视频/音频，站内直接播放</span>
+      <label class="btn-new">🎬 上传媒体<input id="mediaFile" type="file" accept="video/*,audio/*" hidden /></label>
     </header>
     <div class="page-body">
-      <div class="daily-toolbar">
-        <button id="dailyGen" class="btn-new">📋 生成日报</button>
-        <button id="dailyCopy" class="btn-ghost hidden">📄 复制到剪贴板</button>
-        <button id="dailyClear" class="btn-ghost hidden">清空</button>
-      </div>
-      <div id="dailyHint" class="daily-hint">点击「生成日报」，在弹窗中勾选要汇报的任务</div>
-      <textarea id="dailyOut" class="daily-out hidden" readonly placeholder="日报将在这里生成…"></textarea>
+      <div id="mediaGrid" class="media-grid"><div class="empty">还没有媒体，点击右上角「上传媒体」添加视频/音频</div></div>
     </div>
   </section>
 
@@ -377,20 +382,6 @@
     </div>
   </div>
 
-  <!-- 日报选择任务弹窗 -->
-  <div id="dailyModal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head"><h3>选择任务</h3><button id="closeDaily" class="btn-ghost">✕</button></div>
-      <p class="modal-label">勾选要写入日报的任务（默认全选）</p>
-      <div id="dailyPickList" class="daily-pick-list"></div>
-      <div class="modal-foot daily-foot">
-        <button id="dailyPickAll" class="btn-ghost">全选</button>
-        <button id="dailyPickNone" class="btn-ghost">清空</button>
-        <button id="dailyPickOk" class="btn-primary">生成日报</button>
-      </div>
-    </div>
-  </div>
-
   <!-- 发起投票弹窗 -->
   <div id="voteModal" class="modal hidden">
     <div class="modal-card">
@@ -482,7 +473,7 @@
     <button id="roomNotifToggle" class="ctx-item">关闭浏览器提示</button>
   </div>
 
-  <script src="./config.js"></script>
-  <script src="./app.js"></script>
+  <script src="./config.js?v=20260821a"></script>
+  <script src="./app.js?v=20260821a"></script>
 </body>
 </html>

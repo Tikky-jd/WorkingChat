@@ -37,6 +37,14 @@ const fmtTime = (t) => {
 const show = (el, v) => el.classList.toggle('hidden', !v);
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// ---------- 白屏兜底：任何脚本异常都确保首页可见，避免手机端出现纯白屏 ----------
+window.addEventListener('error', (e) => {
+  try { const home = document.getElementById('home'); if (home) home.classList.remove('hidden'); } catch {}
+});
+window.addEventListener('unhandledrejection', () => {
+  try { const home = document.getElementById('home'); if (home) home.classList.remove('hidden'); } catch {}
+});
+
 // 昵称 xx包 预览（取最后一字 + 包）
 function baoPreview(raw) {
   const s = (raw || '').trim();
@@ -246,9 +254,11 @@ async function loadMessages() {
 function renderMessages(list) {
   curMessages = list || [];
   const box = $('#messages');
+  // 关键：在清空 DOM 之前记录滚动状态，否则清空后 scrollHeight/scrollTop 归零，atBottom 永远为 true → 历史被强制回滚底部
+  const wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  const prevScrollTop = box.scrollTop;
   box.innerHTML = '';
-  if (!list.length) { box.innerHTML = '<div class="empty">还没有消息，发一条吧</div>'; updateScrollBtn(); return; }
-  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  if (!list.length) { box.innerHTML = '<div class="empty">还没有消息，发一条吧</div>'; box.scrollTop = 0; updateScrollBtn(); return; }
   list.forEach((m) => {
     const row = document.createElement('div');
     row.dataset.mid = m.id;
@@ -268,7 +278,9 @@ function renderMessages(list) {
     row.innerHTML = `<div class="bubble"><div class="meta"><span class="who">${escapeHtml(m.nickname)}</span><span class="time">${fmtTime(m.time)}</span>${editedTag}${delBtn}</div>${inner}</div>`;
     box.appendChild(row);
   });
-  if (atBottom) box.scrollTop = box.scrollHeight;
+  // 仅在用户本就贴近底部时才回到底部；否则保留其历史浏览位置
+  if (wasAtBottom) box.scrollTop = box.scrollHeight;
+  else box.scrollTop = prevScrollTop;
   updateScrollBtn();
 }
 
@@ -749,13 +761,13 @@ $('#genInvite').onclick = async () => {
 function goView(name) {
   const isMain = name === 'main';
   show($('#app'), isMain);
-  show($('#page-daily'), name === 'daily');
+  show($('#page-media'), name === 'media');
   show($('#page-vote'), name === 'vote');
   show($('#page-moan'), name === 'moan');
   show($('#page-kb'), name === 'kb');
   if (name === 'main') startRoomLive();
   else stopRoomTimers();
-  if (name === 'daily') loadDaily();
+  if (name === 'media') loadMedia();
   if (name === 'vote') loadVotes();
   if (name === 'moan') loadMoans();
   if (name === 'kb') loadKb();
@@ -769,10 +781,11 @@ document.addEventListener('click', (e) => {
   const act = el.dataset.act;
   if (el.dataset.fmt) { applyFmt(el.dataset.fmt); return; }
   if (act === 'view') goView(el.dataset.view);
-  else if (act === 'delmsg') delMessage(el.dataset.id);
+  else   if (act === 'delmsg') delMessage(el.dataset.id);
   else if (act === 'delroom') delRoom(el.dataset.id);
   else if (act === 'delvote') delVote(el.dataset.id);
   else if (act === 'delmoan') delMoan(el.dataset.id);
+  else if (act === 'delmedia') delMedia(el.dataset.id);
   else if (act === 'openimg') window.open(el.dataset.src);
   else if (act === 'clearimg') clearPendingImage();
   else if (act === 'vote') vote(el.dataset.vid, Number(el.dataset.idx));
@@ -785,53 +798,67 @@ document.addEventListener('click', (e) => {
   else if (act === 'kbnewdoc') newKbDoc(el.dataset.folder);
 });
 
-// ---------- 工作日报生成器 ----------
-let dailyRooms = [];
-async function loadDaily() {
-  try { const d = await api('GET', '/api/daily'); dailyRooms = d.rooms; }
-  catch (e) { dailyRooms = []; }
+// ---------- 媒体管理（原工作日报板块改造） ----------
+let mediaList = [];
+async function loadMedia() {
+  try {
+    const d = await api('GET', '/api/media');
+    mediaList = d.media || [];
+    renderMedia();
+  } catch (e) { $('#mediaGrid').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
 }
-$('#dailyGen').onclick = () => {
-  if (!dailyRooms.length) { flash('还没有任何任务，先去左侧「新建任务」建一个'); return; }
-  $('#dailyPickList').innerHTML = dailyRooms.map((r) =>
-    `<label class="daily-pick"><input type="checkbox" data-id="${r.id}" checked /><b>${escapeHtml(r.name)}</b>` +
-    `<span class="daily-cnt">${r.count > 0 ? r.count + ' 条' : '0 条'}</span></label>`).join('');
-  show($('#dailyModal'), true);
+function fmtSize(n) {
+  if (!n) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+function renderMedia() {
+  const box = $('#mediaGrid');
+  if (!mediaList.length) { box.innerHTML = '<div class="empty">还没有媒体，点击右上角「上传媒体」添加视频/音频</div>'; return; }
+  box.innerHTML = mediaList.map((m) => {
+    const isVideo = (m.type || '').startsWith('video/');
+    const player = isVideo
+      ? `<video src="${BASE + m.path}" controls preload="metadata"></video>`
+      : `<audio src="${BASE + m.path}" controls preload="metadata"></audio>`;
+    const canDel = myRole === 'admin' || m.uploadedBy === me;
+    return `<div class="media-card" data-id="${m.id}">
+      <div class="media-thumb">${player}</div>
+      <div class="media-meta">
+        <span class="media-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</span>
+        <span class="media-size">${fmtSize(m.size)}</span>
+      </div>
+      <div class="media-by">上传者：${escapeHtml(m.uploadedBy || '')}</div>
+      ${canDel ? `<button class="media-del" data-act="delmedia" data-id="${m.id}">删除</button>` : ''}
+    </div>`;
+  }).join('');
+}
+$('#mediaFile').onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!/^(video|audio)\//.test(file.type)) { alert('仅支持视频/音频文件（mp4/mp3 等）'); e.target.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const dataUrl = reader.result;
+    const card = document.createElement('div');
+    card.className = 'media-card media-uploading';
+    card.textContent = '上传中…';
+    $('#mediaGrid').prepend(card);
+    try {
+      const r = await api('POST', '/api/media', { name: file.name, type: file.type, dataUrl });
+      mediaList.unshift(r.media);
+      renderMedia();
+    } catch (err) { card.remove(); alert(err.message); }
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
 };
-$('#closeDaily').onclick = () => show($('#dailyModal'), false);
-$('#dailyPickAll').onclick = () => document.querySelectorAll('#dailyPickList input[type=checkbox]').forEach((c) => { c.checked = true; });
-$('#dailyPickNone').onclick = () => document.querySelectorAll('#dailyPickList input[type=checkbox]').forEach((c) => { c.checked = false; });
-$('#dailyPickOk').onclick = () => {
-  const ids = new Set([...document.querySelectorAll('#dailyPickList input[type=checkbox]:checked')].map((c) => c.dataset.id));
-  const sel = dailyRooms.filter((r) => ids.has(r.id));
-  if (!sel.length) { flash('请至少勾选一个任务'); return; }
-  const lines = sel.map((r, i) =>
-    `■ ${i + 1}. ${r.name}：` + (r.count > 0
-      ? `今日推进 ${r.count} 条沟通` + (r.people.length ? `（参与：${r.people.join('、')}）` : '') +
-        (r.snippets.length ? `\n   · ${r.snippets.join('\n   · ')}` : '')
-      : '今日暂未推进沟通')
-  );
-  const d = new Date();
-  const out =
-`【工作日报】${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}
-${lines.join('\n')}
----
-今日推进 ${sel.length} 项任务，累计沟通 ${sel.reduce((a, r) => a + r.count, 0)} 条。`;
-  $('#dailyOut').value = out;
-  show($('#dailyOut'), true);
-  show($('#dailyCopy'), true);
-  show($('#dailyClear'), true);
-  show($('#dailyModal'), false);
-};
-$('#dailyCopy').onclick = async () => {
-  const ta = $('#dailyOut');
-  try { await navigator.clipboard.writeText(ta.value); flash('日报已复制，去群里粘贴吧'); }
-  catch {
-    ta.focus(); ta.select();
-    try { document.execCommand('copy'); flash('已复制（兼容模式）'); } catch { alert('复制失败，请手动 Ctrl+C'); }
-  }
-};
-$('#dailyClear').onclick = () => { $('#dailyOut').value = ''; show($('#dailyOut'), false); show($('#dailyCopy'), false); show($('#dailyClear'), false); };
+async function delMedia(id) {
+  if (!confirm('确定删除该媒体吗？此操作不可恢复')) return;
+  try { await api('DELETE', `/api/media/${id}`); mediaList = mediaList.filter((m) => m.id !== id); renderMedia(); }
+  catch (e) { alert(e.message); }
+}
+window.delMedia = delMedia;
 
 // ---------- 团队投票 ----------
 let voteOptCount = 2;
@@ -1271,9 +1298,31 @@ function flash(msg) {
   setTimeout(() => t.remove(), 1800);
 }
 
+// ---------- 移动端：侧栏抽屉开关 + 面板切换 ----------
+function setupMobileUI() {
+  const appEl = $('#app');
+  const tg = $('#sideToggle'); if (tg) tg.onclick = () => appEl.classList.toggle('sidebar-open');
+  const bd = $('#sideBackdrop'); if (bd) bd.onclick = () => appEl.classList.remove('sidebar-open');
+  // 选中任务后自动收起侧栏（移动端）
+  const rl = $('#roomList'); if (rl) rl.addEventListener('click', () => appEl.classList.remove('sidebar-open'));
+  // 面板切换 tab：点哪个放大哪个（移动端 CSS 控显隐，桌面端无影响）
+  const tabs = document.querySelectorAll('.ptab');
+  tabs.forEach((t) => {
+    t.onclick = () => {
+      const p = t.dataset.panel;
+      tabs.forEach((x) => x.classList.toggle('active', x === t));
+      document.querySelectorAll('.panel').forEach((pn) => pn.classList.toggle('p-active', pn.dataset.panel === p));
+    };
+  });
+  // 默认选中「AI任务区」
+  const chatTab = document.querySelector('.ptab[data-panel="chat"]');
+  if (chatTab) chatTab.click();
+}
+
 // ---------- 启动 ----------
 (async () => {
   try { await loadTheme(); } catch {} // 首页即展示团队定制背景（主题已改为公开可读）
+  setupMobileUI();
   if (localStorage.getItem('oc_token')) {
     try { await enter(); startTimers(); return; } catch {}
   }

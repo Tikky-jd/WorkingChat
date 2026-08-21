@@ -13,7 +13,7 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const MONTH_MS = 30 * 24 * 3600 * 1000;
 const TOKEN_TTL = 7 * 24 * 3600 * 1000;   // token 有效期 7 天
 const MAX_TEXT = 50000;                    // 单条消息文字上限
-const BODY_CAP = 140 * 1024 * 1024;        // 请求体上限（略大于 100MB 图片）
+const BODY_CAP = 400 * 1024 * 1024;        // 请求体上限（媒体上传含 base64 膨胀，放宽至 400MB）
 
 // 安全响应头：防点击劫持 / MIME 嗅探 / 收窄 XSS 影响面
 function addSecurityHeaders(res) {
@@ -61,6 +61,7 @@ let stats = readJson(jf('stats.json'), { date: '', onlineSec: {}, lastTs: {} });
 let votes = readJson(jf('votes.json'), []);   // 团队投票 { id, title, options:[{text, votes:[email]}], by, createdAt, votedBy:[email] }
 let moans = readJson(jf('moans.json'), []);   // 匿名树洞 { id, text, time }（不记录作者，纯匿名）
 let kb = readJson(jf('kb.json'), { folders: [], docs: [] }); // 团队知识库 { folders:[{id,name,parent}], docs:[{id,folderId,title,content,createdBy,updatedBy,createdAt,updatedAt}] }
+let media = readJson(jf('media.json'), []); // 平台媒体库 { id,name,type,ext,size,path,uploadedBy,createdAt }
 // 启动时清理过期 token
 for (const k in sessions) if (sessions[k] && sessions[k].exp && sessions[k].exp < Date.now()) delete sessions[k];
 
@@ -76,6 +77,7 @@ function saveStats() { writeJson(jf('stats.json'), stats); }
 function saveVotes() { writeJson(jf('votes.json'), votes); }
 function saveMoans() { writeJson(jf('moans.json'), moans); }
 function saveKb() { writeJson(jf('kb.json'), kb); }
+function saveMedia() { writeJson(jf('media.json'), media); }
 
 // 知识库文档权限：可管理(manage) > 可编辑(edit) > 仅查看(view，默认)。
 // 作者与管理员始终为「可管理」，不受 perms 影响。
@@ -214,6 +216,8 @@ function cleanOldMessages() {
   // 清理未被引用的上传文件（含知识库文档中引用的图片）
   const used = new Set(messages.filter((m) => m.image).map((m) => m.image.replace('/uploads/', '')));
   used.add(theme.bgImage);
+  // 媒体库文件（media- 前缀）始终保留，不随消息清理被误删
+  media.forEach((mm) => { if (mm.path) used.add(mm.path.replace('/uploads/', '')); });
   kb.docs.forEach((d) => {
     const re = /!\[[^\]]*\]\((\/uploads\/[^)]+)\)/g;
     let m; while ((m = re.exec(d.content || ''))) used.add(m[1].replace('/uploads/', ''));
@@ -238,7 +242,8 @@ function removeImageIfUnused(image) {
 cleanOldMessages();
 setInterval(cleanOldMessages, 24 * 3600 * 1000);
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/x-m4v', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac' };
 
 function serveStatic(req, res) {
   addSecurityHeaders(res);
@@ -608,6 +613,44 @@ async function requestHandler(req, res) {
       if (mnd && method === 'DELETE') {
         if (!isAdmin(me)) return sendJson(res, 403, { error: '仅管理员可删除' });
         moans = moans.filter((x) => x.id !== mnd[1]); saveMoans();
+        return sendJson(res, 200, { ok: true });
+      }
+
+      // ---- 平台媒体库（上传 mp4 / 音频，站内播放）----
+      if (p === '/api/media' && method === 'GET') {
+        const list = media.slice().sort((a, b) => b.createdAt - a.createdAt)
+          .map((m) => ({ id: m.id, name: m.name, type: m.type, ext: m.ext, size: m.size, path: m.path, uploadedBy: m.uploadedBy, createdAt: m.createdAt }));
+        return sendJson(res, 200, { media: list });
+      }
+      if (p === '/api/media' && method === 'POST') {
+        if (!rateLimit('media:' + clientIp(req), 30, 60000)) return sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        let dataUrl = b.dataUrl || '';
+        let type = (b.type || '').toLowerCase();
+        let name = (b.name || '未命名媒体').slice(0, 200);
+        // 兼容 "data:<mime>;base64,<...>" 或纯 base64
+        let mm = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        let buf, mime;
+        if (mm) { mime = mm[1].toLowerCase(); buf = Buffer.from(mm[2], 'base64'); }
+        else { mime = type || 'application/octet-stream'; try { buf = Buffer.from(String(dataUrl), 'base64'); } catch { return sendJson(res, 400, { error: '文件数据无法解析' }); } }
+        if (!/^(video|audio)\//.test(mime)) return sendJson(res, 400, { error: '仅支持视频/音频文件（mp4/mp3 等）' });
+        if (!buf || buf.length < 8) return sendJson(res, 400, { error: '文件内容为空或已损坏' });
+        if (buf.length > 300 * 1024 * 1024) return sendJson(res, 400, { error: '媒体文件过大（上限 300MB）' });
+        const ext = (mime.split('/')[1] || 'bin').replace(/[^a-z0-9]/g, '');
+        const fname = `media-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+        fs.writeFileSync(path.join(UPLOADS_DIR, fname), buf);
+        const rec = { id: crypto.randomUUID(), name, type: mime, ext, size: buf.length, path: '/uploads/' + fname, uploadedBy: me, createdAt: Date.now() };
+        media.push(rec); saveMedia();
+        return sendJson(res, 200, { media: rec });
+      }
+      const mdel = p.match(/^\/api\/media\/([^/]+)$/);
+      if (mdel && method === 'DELETE') {
+        const idx = media.findIndex((m) => m.id === mdel[1]);
+        if (idx < 0) return sendJson(res, 404, { error: '媒体不存在' });
+        const m = media[idx];
+        if (!isAdmin(me) && m.uploadedBy !== me) return sendJson(res, 403, { error: '仅上传者或管理员可删除' });
+        if (m.path) { try { fs.unlinkSync(path.join(UPLOADS_DIR, m.path.replace('/uploads/', ''))); } catch {} }
+        media.splice(idx, 1); saveMedia();
         return sendJson(res, 200, { ok: true });
       }
 

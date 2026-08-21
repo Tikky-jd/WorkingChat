@@ -492,44 +492,50 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 /* ---------- 全局后台媒体悬浮控制条（半透明、可伸缩） ---------- */
 .media-bar {
   position: fixed; right: 20px; bottom: 20px; z-index: 9999;
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px; max-width: 340px;
-  background: rgba(28, 32, 40, 0.62);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 14px; color: #fff;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; max-width: 560px;
+  background: rgba(28, 32, 40, 0.66);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px; color: #fff;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.32);
 }
 .media-toggle {
-  flex: none; width: 26px; height: 26px; border: none; border-radius: 8px;
-  background: rgba(255, 255, 255, 0.14); color: #fff; cursor: pointer; font-size: 13px; line-height: 1;
+  flex: none; width: 30px; height: 30px; border: none; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.16); color: #fff; cursor: pointer; font-size: 14px; line-height: 1;
 }
-.media-toggle:hover { background: rgba(255, 255, 255, 0.26); }
+.media-toggle:hover { background: rgba(255, 255, 255, 0.3); }
 .media-thumb {
-  flex: none; width: 46px; height: 46px; border-radius: 9px; overflow: hidden;
+  flex: none; width: 60px; height: 60px; border-radius: 11px; overflow: hidden;
   background: rgba(255, 255, 255, 0.12); display: flex; align-items: center; justify-content: center;
 }
-.media-icon { font-size: 22px; }
-.bg-media { width: 100%; height: 100%; object-fit: cover; border-radius: 9px; display: none; }
+.media-icon { font-size: 28px; }
+.bg-media { width: 100%; height: 100%; object-fit: cover; border-radius: 11px; display: none; }
+/* 视频模式：放大为真正的迷你播放器（16:9） */
+.media-bar.show-video .media-thumb { width: 176px; height: 110px; }
 .media-bar.show-video .bg-media { display: block; }
 .media-bar.show-video .media-icon { display: none; }
 .media-info { flex: 1; min-width: 0; }
 .media-title {
-  font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.media-prog { margin-top: 6px; height: 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.2); cursor: pointer; }
-.media-prog-fill { height: 100%; width: 0; border-radius: 3px; background: #4f9bff; }
-.media-actions { flex: none; display: flex; gap: 6px; }
+.media-prog { margin-top: 8px; height: 6px; border-radius: 4px; background: rgba(255, 255, 255, 0.22); cursor: pointer; }
+.media-prog-fill { height: 100%; width: 0; border-radius: 4px; background: #4f9bff; }
+.media-actions { flex: none; display: flex; gap: 8px; }
 .media-btn {
-  width: 32px; height: 32px; border: none; border-radius: 9px;
-  background: rgba(255, 255, 255, 0.16); color: #fff; cursor: pointer; font-size: 14px; line-height: 1;
+  width: 38px; height: 38px; border: none; border-radius: 11px;
+  background: rgba(255, 255, 255, 0.18); color: #fff; cursor: pointer; font-size: 15px; line-height: 1;
 }
-.media-btn:hover { background: rgba(255, 255, 255, 0.3); }
+.media-btn:hover { background: rgba(255, 255, 255, 0.34); }
 .media-bar.collapsed .media-info, .media-bar.collapsed .media-actions { display: none; }
-.media-bar.collapsed { padding: 8px; gap: 8px; }
+.media-bar.collapsed { padding: 10px; gap: 10px; }
+.media-bar.collapsed.show-video .media-thumb { width: 96px; height: 60px; }
 
 @media (max-width: 560px) {
-  .media-bar { right: 10px; left: 10px; bottom: 10px; max-width: none; }
+  .media-bar { right: 10px; left: 10px; bottom: 10px; max-width: none; gap: 10px; padding: 12px; }
+  .media-bar.show-video .media-thumb { width: 128px; height: 80px; }
+  .media-bar.collapsed.show-video .media-thumb { width: 84px; height: 54px; }
+  .media-btn { width: 34px; height: 34px; }
 }
 
 /* ---------- 移动端响应式（≤860px） ---------- */

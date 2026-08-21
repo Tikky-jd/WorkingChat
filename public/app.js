@@ -643,11 +643,27 @@ function renderTodos(list) {
   list.forEach((t) => {
     const row = document.createElement('div');
     row.className = 'todo-item' + (t.done ? ' done' : '');
-    row.innerHTML = `<label class="todo-check"><input type="checkbox" ${t.done ? 'checked' : ''}/><span class="todo-text">${escapeHtml(t.text)}</span></label><button class="todo-x" title="删除">✕</button>`;
+    const isMine = t.by === me;
+    // 别人完成了我布置的代办 → 我确认后任务5才成立；我完成的别人代办 → 等待对方确认
+    const needConfirm = t.done && isMine && t.doneBy && t.doneBy !== me && !t.confirmed;
+    const waitConfirm = t.done && !isMine && t.doneBy === me && !t.confirmed;
+    let extra = '';
+    if (waitConfirm) extra = '<span class="todo-wait">待发布者确认</span>';
+    if (needConfirm) extra = `<button class="todo-confirm" data-tid="${t.id}">✓ 确认完成</button>`;
+    row.innerHTML = `<label class="todo-check"><input type="checkbox" ${t.done ? 'checked' : ''}/><span class="todo-text">${escapeHtml(t.text)}</span></label>${extra}<button class="todo-x" title="删除">✕</button>`;
     row.querySelector('input').onchange = () => toggleTodo(t.id, row.querySelector('input').checked);
     row.querySelector('.todo-x').onclick = () => deleteTodo(t.id);
+    const cf = row.querySelector('.todo-confirm');
+    if (cf) cf.onclick = () => confirmTodo(t.id);
     box.appendChild(row);
   });
+}
+async function confirmTodo(tid) {
+  try {
+    await api('PUT', `/api/rooms/${currentRoomId}/todos/${tid}`, { confirm: true });
+    await loadTodos();
+    flash('已确认完成，协作任务 +1');
+  } catch (e) { alert(e.message); }
 }
 async function addTodo() {
   if (!currentRoomId) { flash('请先选择左侧任务'); return; }
@@ -696,11 +712,14 @@ function renderRank(list) {
     row.className = 'member-item';
     const mins = Math.floor(m.onlineSec / 60000); // onlineSec 单位是毫秒 → 转分钟
     const role = m.role === 'admin' ? '<span class="member-role">管理员</span>' : '';
+    const avatarHtml = m.avatar ? `<span class="member-ava ${m.avatarFrame === 'gold' ? 'frame-gold' : ''}"><img src="${BASE + m.avatar}" alt="" /></span>` : '';
+    const title2Html = m.title2 ? `<span class="member-title2">${escapeHtml(m.title2)}</span>` : '';
     row.innerHTML =
       `<span class="member-dot ${m.online ? 'on' : ''}"></span>` +
       `<span class="rank-no">${i + 1}</span>` +
       `<span class="rank-title t-${m.title}">${m.title}</span>` +
-      `<span class="member-name">${escapeHtml(m.nickname)}</span>${role}` +
+      avatarHtml +
+      `<span class="member-name">${escapeHtml(m.nickname)}</span>${role}${title2Html}` +
       `<span class="rank-score">${m.score}分</span>` +
       `<span class="member-email">在线${mins}分 · 消息${m.msgs} · 完成${m.done}</span>`;
     box.appendChild(row);
@@ -776,18 +795,298 @@ function goView(name) {
   }
   const isMain = name === 'main';
   show($('#app'), isMain);
+  show($('#page-me'), name === 'me');
   show($('#page-media'), name === 'media');
   show($('#page-vote'), name === 'vote');
   show($('#page-moan'), name === 'moan');
   show($('#page-kb'), name === 'kb');
   if (name === 'main') startRoomLive();
   else stopRoomTimers();
+  if (name === 'me') loadMe();
   if (name === 'media') loadMedia();
   if (name === 'vote') loadVotes();
   if (name === 'moan') loadMoans();
   if (name === 'kb') loadKb();
 }
 window.goView = goView;
+
+// ---------- 个人中心（资料 / 签到任务 / 商城灵石） ----------
+const SIGNIN_REWARD = { bonus: 5, xp: 10 };
+const DAILY_REWARD = { bonus: 5, xp: 25 };
+const NEWBIE_REWARD = { bonus: 10, xp: 50 };
+const NEWBIE_DAYS = 30;
+const SPIRIT_ORDER = ['xp', 'zp', 'sp', 'jp'];
+const SPIRIT_NAMES = { jp: '极品灵石', sp: '上品灵石', zp: '中品灵石', xp: '下品灵石' };
+const SPIRIT_ICONS = { jp: '💎', sp: '🔮', zp: '🪨', xp: '⚪' };
+
+let meData = null;
+function meTab(name) {
+  document.querySelectorAll('.me-tab').forEach((b) => b.classList.toggle('active', b.dataset.me === name));
+  show($('#meProfile'), name === 'profile');
+  show($('#meTasks'), name === 'tasks');
+  show($('#meShop'), name === 'shop');
+}
+document.querySelectorAll('.me-tab').forEach((b) => { b.onclick = () => meTab(b.dataset.me); });
+$('#meBtn').onclick = () => goView('me');
+
+async function loadMe() {
+  try { meData = await api('GET', '/api/me'); }
+  catch (e) { meData = null; flash(e.message); return; }
+  renderProfile();
+  renderTasksPane();
+  renderShop();
+}
+
+// ---- 板块1：个人资料 ----
+function renderProfile() {
+  const d = meData || {};
+  const p = d.profile || {};
+  $('#meProfile').innerHTML = `
+    <div class="me-card">
+      <h3 class="me-card-t">👤 个人资料</h3>
+      <div class="me-avatar-row">
+        <div class="me-avatar ${d.avatarFrame === 'gold' ? 'frame-gold' : ''}">
+          ${p.avatar ? `<img src="${BASE + p.avatar}" alt="头像" />` : `<span class="me-avatar-letter">${escapeHtml((d.nickname || '?').slice(0, 1))}</span>`}
+        </div>
+        <div class="me-avatar-info">
+          <div class="me-nick">${escapeHtml(d.nickname)}${d.title2 ? ` <span class="me-title2">${escapeHtml(d.title2)}</span>` : ''}</div>
+          <div class="me-sub">邮箱：${escapeHtml(d.email)}（不可修改）</div>
+        </div>
+      </div>
+      <label class="me-field">头像
+        <label class="btn-ghost me-avatar-btn">上传图片<input id="meAvatarFile" type="file" accept="image/*" hidden /></label>
+        <span class="me-hint">支持 JPG/PNG，展示在活跃榜与个人中心</span>
+      </label>
+      <label class="me-field">昵称
+        <div class="me-nick-row">
+          <input id="meNick" class="input" value="${escapeHtml(d.nickname)}" maxlength="20" ${d.renameCards > 0 ? '' : 'disabled'} />
+          ${d.renameCards > 0 ? `<button id="meRenameBtn" class="btn-ghost">✏️ 改名</button>` : ''}
+        </div>
+        <span class="me-hint">${d.renameCards > 0 ? `拥有改名卡 ×${d.renameCards}，可自由修改` : '未持有改名卡（可在商城购买）'}</span>
+      </label>
+      <label class="me-field">年龄
+        <input id="meAge" class="input" type="number" min="1" max="150" value="${p.age ?? ''}" placeholder="如 28" />
+      </label>
+      <label class="me-field">出生日期
+        <input id="meBirth" class="input" type="date" value="${p.birth || ''}" />
+      </label>
+      <label class="me-field">是否婚配
+        <select id="meMarried" class="input">
+          <option value="">未设置</option>
+          <option value="false" ${p.married === false ? 'selected' : ''}>未婚</option>
+          <option value="true" ${p.married === true ? 'selected' : ''}>已婚</option>
+        </select>
+      </label>
+      <div class="me-card-foot">
+        <button id="meSaveProfile" class="btn-primary">💾 保存资料</button>
+      </div>
+    </div>`;
+  $('#meSaveProfile').onclick = saveProfile;
+  if ($('#meRenameBtn')) $('#meRenameBtn').onclick = async () => {
+    const nick = $('#meNick').value.trim();
+    if (!nick) { alert('请输入新昵称'); return; }
+    try {
+      const r = await api('PUT', '/api/me/profile', { nickname: nick });
+      meData.nickname = r.nickname; meData.renameCards = r.renameCards;
+      $('#meName').textContent = r.nickname;
+      flash('昵称已更新'); renderProfile();
+    } catch (e) { alert(e.message); }
+  };
+  $('#meAvatarFile').onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    if (!/^image\//.test(f.type)) { alert('仅支持图片文件'); e.target.value = ''; return; }
+    const rd = new FileReader();
+    rd.onload = async () => {
+      try {
+        const r = await api('PUT', '/api/me/profile', { avatar: rd.result });
+        meData.profile = r.profile;
+        renderProfile(); flash('头像已更新');
+      } catch (err) { alert(err.message); }
+    };
+    rd.readAsDataURL(f); e.target.value = '';
+  };
+}
+
+async function saveProfile() {
+  const body = {
+    age: $('#meAge').value,
+    birth: $('#meBirth').value || null,
+    married: $('#meMarried').value === '' ? null : $('#meMarried').value === 'true',
+  };
+  try {
+    const r = await api('PUT', '/api/me/profile', body);
+    meData.profile = r.profile;
+    flash('资料已保存'); loadMe();
+  } catch (e) { alert(e.message); }
+}
+
+// ---- 板块2：签到与任务 ----
+function renderTasksPane() {
+  const d = meData || {};
+  $('#meTasks').innerHTML = `
+    <div class="me-card">
+      <h3 class="me-card-t">📅 每日签到</h3>
+      <p class="me-hint">每月签到一次：+${SIGNIN_REWARD.bonus} 活跃积分 · +${SIGNIN_REWARD.xp} 枚下品灵石</p>
+      <div class="signin-grid">${signinGrid(d.signinDates || [])}</div>
+      <div class="me-card-foot">
+        <button id="signinBtn" class="btn-primary" ${d.signedToday ? 'disabled' : ''}>${d.signedToday ? '✅ 今日已签到' : '🖊 立即签到'}</button>
+        <span class="me-hint" id="signinMsg"></span>
+      </div>
+    </div>
+    <div class="me-card">
+      <h3 class="me-card-t">🗓 每日任务 <span class="me-hint">每项：+${DAILY_REWARD.bonus} 活跃积分 · +${DAILY_REWARD.xp} 下品灵石</span></h3>
+      <div id="dailyTaskList">${dailyTasksHtml((d.daily || []))}</div>
+    </div>
+    <div class="me-card">
+      <h3 class="me-card-t">🌟 专属任务 <span class="me-hint">新用户注册 ${NEWBIE_DAYS} 天内有效，过期锁定</span></h3>
+      <div class="newbie-box">
+        <div class="newbie-row">
+          <b>任务1：填写个人资料</b>
+          <span class="me-hint">${d.newbieLocked ? '🔒 已过期锁定' : `剩余 ${d.newbieDaysLeft ?? '—'} 天`}</span>
+        </div>
+        <p class="me-hint">完善头像 / 昵称 / 年龄 / 出生日期 / 婚配任一即可</p>
+        <div class="me-card-foot">
+          ${d.newbieDone
+            ? (d.newbieClaimed ? '<button class="btn-ghost" disabled>✅ 奖励已领取</button>' : `<button id="newbieClaimBtn" class="btn-primary">🎁 领取奖励（+${NEWBIE_REWARD.bonus}活跃 · +${NEWBIE_REWARD.xp}下品灵石）</button>`)
+            : `<button id="newbieGoBtn" class="btn-ghost" data-me="profile">去填写资料 →</button>`}
+        </div>
+      </div>
+    </div>`;
+  const sb = $('#signinBtn');
+  if (sb && !d.signedToday) sb.onclick = doSignin;
+  if ($('#newbieClaimBtn')) $('#newbieClaimBtn').onclick = claimNewbie;
+  if ($('#newbieGoBtn')) $('#newbieGoBtn').onclick = () => meTab('profile');
+}
+function signinGrid(dates) {
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const today = now.getDate();
+  let html = '';
+  for (let i = 1; i <= daysInMonth; i++) {
+    const signed = (dates || []).includes(i);
+    html += `<span class="signin-cell ${signed ? 'signed' : ''} ${i === today ? 'today' : ''}" title="${i}日${signed ? ' · 已签到' : ''}">${i}${signed ? ' ✓' : ''}</span>`;
+  }
+  return html;
+}
+function dailyTasksHtml(list) {
+  if (!list || !list.length) return '<div class="empty">加载中…</div>';
+  return list.map((t) => `
+    <div class="task-row ${t.done ? 'done' : ''}">
+      <div class="task-info">
+        <b>${escapeHtml(t.title)}</b>
+        <span class="me-hint">${escapeHtml(t.desc)}</span>
+      </div>
+      <div class="task-act">
+        ${t.claimed ? '<span class="task-claimed">✅ 已领取</span>'
+          : t.done ? `<button class="btn-primary task-claim" data-tid="${t.id}">🎁 领取</button>`
+          : '<span class="task-pending">未完成</span>'}
+      </div>
+    </div>`).join('');
+}
+async function doSignin() {
+  try {
+    const r = await api('POST', '/api/me/signin');
+    $('#signinMsg').textContent = `签到成功！+${r.reward.bonus} 活跃积分 · +${r.reward.xp} 下品灵石`;
+    meData.signedToday = true; meData.signinDates = r.dates; meData.spirit = r.spirit; meData.bonus = r.bonus;
+    renderTasksPane();
+  } catch (e) { alert(e.message); }
+}
+async function claimDaily(tid) {
+  try {
+    const r = await api('POST', `/api/me/tasks/daily/${tid}/claim`);
+    flash(`领取成功！+${r.reward.bonus} 活跃积分 · +${r.reward.xp} 下品灵石`);
+    meData.spirit = r.spirit; meData.bonus = r.bonus;
+    loadMe();
+  } catch (e) { alert(e.message); }
+}
+async function claimNewbie() {
+  try {
+    const r = await api('POST', '/api/me/tasks/newbie/claim');
+    flash(`专属奖励已领取！+${r.reward.bonus} 活跃积分 · +${r.reward.xp} 下品灵石`);
+    meData.spirit = r.spirit; meData.bonus = r.bonus;
+    loadMe();
+  } catch (e) { alert(e.message); }
+}
+
+// ---- 板块3：商城与灵石 ----
+function renderShop() {
+  const d = meData || {};
+  const sp = d.spirit || {};
+  $('#meShop').innerHTML = `
+    <div class="me-card">
+      <h3 class="me-card-t">💠 我的灵石</h3>
+      <p class="me-hint">稀有度：💎极品 ＞ 🔮上品 ＞ 🪨中品 ＞ ⚪下品 · 兑换比例 1:100（低→高）</p>
+      <div class="spirit-row">
+        ${SPIRIT_ORDER.slice().reverse().map((k) => `
+          <div class="spirit-item ${k === 'jp' ? 'rare' : ''}">
+            <span class="spirit-icon">${SPIRIT_ICONS[k]}</span>
+            <b>${sp[k] || 0}</b>
+            <em>${SPIRIT_NAMES[k].replace('灵石', '')}</em>
+          </div>`).join('')}
+      </div>
+      <div class="convert-row">
+        <button class="btn-ghost convert-btn" data-from="xp" data-to="zp">兑换 100 下品 → 1 中品</button>
+        <button class="btn-ghost convert-btn" data-from="zp" data-to="sp">兑换 100 中品 → 1 上品</button>
+        <button class="btn-ghost convert-btn" data-from="sp" data-to="jp">兑换 100 上品 → 1 极品</button>
+      </div>
+    </div>
+    <div class="me-card">
+      <h3 class="me-card-t">🛒 灵石商城</h3>
+      <div class="shop-list">
+        ${shopItemsHtml()}
+      </div>
+    </div>`;
+  document.querySelectorAll('.convert-btn').forEach((b) => { b.onclick = () => convertSpirit(b.dataset.from, b.dataset.to); });
+  document.querySelectorAll('.shop-buy').forEach((b) => { b.onclick = () => buyItem(b.dataset.id); });
+}
+function shopItemsHtml() {
+  const items = [
+    { id: 'rename', name: '改名卡', icon: '🪪', desc: '解锁一次自由修改昵称的机会（不再强制「x包」）', price: 50, unit: 'xp' },
+    { id: 'title', name: '个性称号', icon: '🏅', desc: '为自己定制专属称号，展示在名字旁', price: 100, unit: 'xp' },
+    { id: 'frame', name: '鎏金头像框', icon: '🖼️', desc: '永久解锁鎏金头像框，金光闪闪', price: 200, unit: 'xp' },
+  ];
+  const owned = meData ? { rename: (meData.renameCards || 0) > 0, title: !!meData.title2, frame: meData.avatarFrame === 'gold' } : {};
+  return items.map((it) => `
+    <div class="shop-item">
+      <span class="shop-ico">${it.icon}</span>
+      <div class="shop-info">
+        <b>${it.name}</b>
+        <span class="me-hint">${it.desc}</span>
+      </div>
+      <span class="shop-price">${it.price} ${SPIRIT_NAMES[it.unit]}</span>
+      ${owned[it.id]
+        ? '<span class="shop-owned">✅ 已拥有</span>'
+        : `<button class="btn-primary shop-buy" data-id="${it.id}">购买</button>`}
+    </div>`).join('');
+}
+async function convertSpirit(from, to) {
+  try {
+    const r = await api('POST', '/api/me/spirit/convert', { from, to });
+    meData.spirit = r.spirit;
+    flash(`兑换成功：${SPIRIT_NAMES[from]} -100 → ${SPIRIT_NAMES[to]} +1`);
+    renderShop();
+  } catch (e) { alert(e.message); }
+}
+async function buyItem(id) {
+  const body = {};
+  if (id === 'title') {
+    const t2 = prompt('请输入你的专属称号（最多 12 字）');
+    if (!t2) return;
+    body.title2 = t2;
+  }
+  try {
+    const r = await api('POST', `/api/me/shop/${id}/buy`, body);
+    meData.spirit = r.spirit; meData.renameCards = r.renameCards; meData.title2 = r.title2; meData.avatarFrame = r.avatarFrame;
+    flash('购买成功！');
+    loadMe();
+  } catch (e) { alert(e.message); }
+}
+
+// 全局委托补充：每日任务领奖
+document.addEventListener('click', (e) => {
+  const claimBtn = e.target.closest('.task-claim');
+  if (claimBtn) { claimDaily(claimBtn.dataset.tid); return; }
+});
 
 // 全局事件委托：统一处理所有 data-act 动作（不用内联 onclick，兼容严格 CSP）
 document.addEventListener('click', (e) => {
@@ -842,16 +1141,16 @@ function renderMedia() {
       : `<audio src="${BASE + m.path}" controls preload="metadata"></audio>`;
     const canDel = myRole === 'admin' || m.uploadedBy === me;
     return `<div class="media-card" data-id="${m.id}">
-      <div class="media-thumb">${player}</div>
-      <div class="media-meta">
-        <span class="media-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</span>
-        <span class="media-size">${fmtSize(m.size)}</span>
+      <div class="media-container">${player}</div>
+      <div class="media-info">
+        <div class="media-title-row">
+          <span class="media-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</span>
+          <span class="media-size">${fmtSize(m.size)}</span>
+        </div>
+        <div class="media-by">上传者：${escapeHtml(m.uploadedBy || '')}</div>
       </div>
-      <div class="media-by">上传者：${escapeHtml(m.uploadedBy || '')}</div>
-      <div class="media-card-actions">
-        <button class="media-bg-btn" data-act="mediabg" data-src="${m.path}" data-name="${escapeHtml(m.name)}" data-video="${isVideo ? '1' : '0'}">🎧 后台播放</button>
-        ${canDel ? `<button class="media-del" data-act="delmedia" data-id="${m.id}">删除</button>` : ''}
-      </div>
+      <button class="media-bg-btn" data-act="mediabg" data-src="${m.path}" data-name="${escapeHtml(m.name)}" data-video="${isVideo ? '1' : '0'}">🎧 后台播放</button>
+      ${canDel ? `<button class="media-del" data-act="delmedia" data-id="${m.id}">删除</button>` : ''}
     </div>`;
   }).join('');
 }

@@ -140,6 +140,81 @@ const TITLES = [
 function titleOf(score) { return (TITLES.find((x) => score >= x.min) || TITLES[TITLES.length - 1]).t; }
 function nickOf(email) { const u = users.find((x) => x.email === email); return u ? u.nickname : email; }
 
+// ===== 灵石体系：极品(jp) > 上品(sp) > 中品(zp) > 下品(xp)，低→高 1:100 兑换 =====
+const SPIRIT_ORDER = ['xp', 'zp', 'sp', 'jp']; // 从低到高
+const SPIRIT_NAMES = { jp: '极品灵石', sp: '上品灵石', zp: '中品灵石', xp: '下品灵石' };
+const SPIRIT_ICONS = { jp: '💎', sp: '🔮', zp: '🪨', xp: '⚪' };
+const SPIRIT_CONVERT_RATIO = 100; // 100 低阶 = 1 高阶
+function newSpirit() { return { jp: 0, sp: 0, zp: 0, xp: 0 }; }
+
+// 签到：每月 +5 活跃积分 +10 下品灵石
+const SIGNIN_REWARD = { bonus: 5, xp: 10 };
+// 每日任务：每项完成 +5 活跃积分 +25 下品灵石
+const DAILY_REWARD = { bonus: 5, xp: 25 };
+// 专属任务（新用户 30 天内）：填写个人资料 +10 活跃积分 +50 下品灵石
+const NEWBIE_REWARD = { bonus: 10, xp: 50 };
+const NEWBIE_DAYS = 30;
+
+const DAILY_TASKS = [
+  { id: 't1', title: '活跃发言', desc: '在任意任务中发言 3 条' },
+  { id: 't2', title: '完成代办', desc: '完成 1 项代办清单' },
+  { id: 't3', title: '知识分享', desc: '在知识库中完成一次知识分享（新建文档）' },
+  { id: 't4', title: '快乐分享', desc: '去意见反馈分享一件令人开心的事' },
+  { id: 't5', title: '协作完成', desc: '完成一次别人布置的任务（需发布者确认）' },
+];
+
+// 商城（灵石购买）
+const SHOP_ITEMS = [
+  { id: 'rename', name: '改名卡', icon: '🪪', desc: '解锁一次自由修改昵称的机会（不再强制「x包」）', price: 50, unit: 'xp' },
+  { id: 'title', name: '个性称号', icon: '🏅', desc: '为自己定制专属称号，展示在名字旁', price: 100, unit: 'xp' },
+  { id: 'frame', name: '鎏金头像框', icon: '🖼️', desc: '永久解锁鎏金头像框，金光闪闪', price: 200, unit: 'xp' },
+];
+
+function ensureUser(u) {
+  if (!u.spirit) u.spirit = newSpirit();
+  if (typeof u.bonus !== 'number') u.bonus = 0;
+  if (!u.profile) u.profile = {};
+  if (!u.tasks) u.tasks = {};
+  if (!u.tasks.daily) u.tasks.daily = {};
+  if (!u.tasks.newbie) u.tasks.newbie = { claimed: false };
+  if (!u.createdAt) u.createdAt = Date.now();
+  if (typeof u.renameCards !== 'number') u.renameCards = 0;
+  if (!u.title2) u.title2 = '';
+  if (!u.avatarFrame) u.avatarFrame = '';
+  return u;
+}
+function ymStr(d) { const x = d || new Date(); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; }
+function signinDates(u) { return (u.signin && u.signin[ymStr()]) || []; }
+function todayNum() { return new Date().getDate(); }
+
+// 每日任务完成判定（按当天 0 点起）
+function dailyTaskDone(u, taskId, dayStart) {
+  const e = u.email;
+  switch (taskId) {
+    case 't1': return messages.filter((m) => m.user === e && m.time >= dayStart && !m.recalled).length >= 3;
+    case 't2': return todos.some((t) => t.done && t.doneBy === e && t.doneAt >= dayStart);
+    case 't3': return kb.docs.some((d) => d.createdBy === e && d.createdAt >= dayStart);
+    case 't4': return moans.some((x) => x.by === e && x.time >= dayStart);
+    case 't5': return todos.some((t) => t.done && t.by !== e && t.confirmed && t.doneAt >= dayStart);
+  }
+  return false;
+}
+// 专属任务：填写个人资料（年龄/出生日期/婚配/头像任一填写即视为完成）
+function newbieDone(u) { const p = u.profile || {}; return !!(p.age || p.birth || p.married === true || p.married === false || p.avatar); }
+function newbieLocked(u) { return Date.now() - (u.createdAt || Date.now()) > NEWBIE_DAYS * 86400000; }
+// 活跃总分 = 动态分（在线分钟 + 当日消息）+ 额外奖励分（签到/任务）
+function scoreOf(u) {
+  ensureStatsDate();
+  const dayStart = new Date(todayStr() + 'T00:00:00').getTime();
+  const ms = messages.filter((m) => m.user === u.email && m.time >= dayStart && !m.recalled).length;
+  return Math.round((stats.onlineSec[u.email] || 0) / 60000) + ms + (u.bonus || 0);
+}
+// 领取奖励：加活跃积分 + 下品灵石
+function grantReward(u, reward) {
+  u.bonus = (u.bonus || 0) + reward.bonus;
+  u.spirit.xp = (u.spirit.xp || 0) + reward.xp;
+}
+
 // 在线状态：email -> {roomId, ts}
 const presence = new Map();
 
@@ -218,6 +293,8 @@ function cleanOldMessages() {
   used.add(theme.bgImage);
   // 媒体库文件（media- 前缀）始终保留，不随消息清理被误删
   media.forEach((mm) => { if (mm.path) used.add(mm.path.replace('/uploads/', '')); });
+  // 用户头像（avatar- 前缀）始终保留
+  users.forEach((u) => { if (u.profile && u.profile.avatar) used.add(u.profile.avatar.replace('/uploads/', '')); });
   kb.docs.forEach((d) => {
     const re = /!\[[^\]]*\]\((\/uploads\/[^)]+)\)/g;
     let m; while ((m = re.exec(d.content || ''))) used.add(m[1].replace('/uploads/', ''));
@@ -319,7 +396,8 @@ async function requestHandler(req, res) {
         const nickname = toBaoNickname(rawNick);
         if (!nickname) return sendJson(res, 400, { error: '昵称不能为空' });
         const salt = crypto.randomBytes(16).toString('hex');
-        users.push({ email, salt, hash: hashPassword(password, salt), nickname, role: 'user', invite: code });
+        const nu = { email, salt, hash: hashPassword(password, salt), nickname, role: 'user', invite: code, createdAt: Date.now(), spirit: newSpirit(), bonus: 0, profile: {}, signin: {}, tasks: { daily: {}, newbie: { claimed: false } }, renameCards: 0, title2: '', avatarFrame: '' };
+        users.push(nu);
         saveUsers();
         inv.used = true; inv.usedBy = email; inv.usedAt = Date.now(); saveInvites();
         const token = crypto.randomBytes(32).toString('hex');
@@ -351,8 +429,169 @@ async function requestHandler(req, res) {
       if (p === '/api/me' && method === 'GET') {
         const e = currentUser(req);
         if (!e) return sendJson(res, 401, { error: '未登录' });
-        const u = users.find((x) => x.email === e);
-        return sendJson(res, 200, { email: e, nickname: u.nickname, role: u.role });
+        const u = ensureUser(users.find((x) => x.email === e));
+        const today = todayStr();
+        const dayStart = new Date(today + 'T00:00:00').getTime();
+        return sendJson(res, 200, {
+          email: e, nickname: u.nickname, role: u.role,
+          profile: u.profile || {}, spirit: u.spirit || newSpirit(), bonus: u.bonus || 0,
+          score: scoreOf(u), title: titleOf(scoreOf(u)),
+          renameCards: u.renameCards || 0, title2: u.title2 || '', avatarFrame: u.avatarFrame || '',
+          createdAt: u.createdAt, newbieDone: newbieDone(u), newbieLocked: newbieLocked(u),
+          signinDates: signinDates(u), signedToday: signinDates(u).includes(todayNum()),
+          daily: DAILY_TASKS.map((t) => {
+            const key = `${today}:${t.id}`;
+            return { id: t.id, title: t.title, desc: t.desc, done: dailyTaskDone(u, t.id, dayStart), claimed: !!(u.tasks.daily && u.tasks.daily[key]) };
+          }),
+        });
+      }
+
+      // ---- 个人中心：保存个人资料（头像/昵称/年龄/出生日期/婚配）----
+      if (p === '/api/me/profile' && method === 'PUT') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const b = JSON.parse(await readBody(req) || '{}');
+        if (b.avatar && String(b.avatar).startsWith('data:image/')) {
+          try { u.profile.avatar = saveDataUrl(b.avatar, 'avatar'); }
+          catch (err) { return sendJson(res, 400, { error: err.message }); }
+        } else if (b.avatar === null) u.profile.avatar = '';
+        if (b.nickname !== undefined) {
+          const raw = String(b.nickname).trim().slice(0, 20);
+          if (!raw) return sendJson(res, 400, { error: '昵称不能为空' });
+          if (u.renameCards > 0) { u.nickname = raw; u.renameCards -= 1; }
+          else {
+            const bao = toBaoNickname(raw);
+            if (!bao) return sendJson(res, 400, { error: '昵称不能为空' });
+            u.nickname = bao;
+          }
+        }
+        if (b.age !== undefined && b.age !== null && b.age !== '') {
+          const age = Number(b.age);
+          if (!Number.isInteger(age) || age < 1 || age > 150) return sendJson(res, 400, { error: '年龄需为 1~150 的整数' });
+          u.profile.age = age;
+        } else if (b.age === null || b.age === '') u.profile.age = null;
+        if (b.birth !== undefined && b.birth !== null && b.birth !== '') {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.birth))) return sendJson(res, 400, { error: '出生日期格式应为 YYYY-MM-DD' });
+          u.profile.birth = String(b.birth);
+        } else if (b.birth === null || b.birth === '') u.profile.birth = null;
+        if (b.married !== undefined && b.married !== null && b.married !== '') u.profile.married = String(b.married) === 'true';
+        else if (b.married === null || b.married === '') u.profile.married = null;
+        if (b.title2 !== undefined) u.title2 = String(b.title2).trim().slice(0, 12);
+        saveUsers();
+        return sendJson(res, 200, { ok: true, nickname: u.nickname, renameCards: u.renameCards, profile: u.profile, title2: u.title2 });
+      }
+
+      // ---- 个人中心：每日签到（每月一次，+5 活跃积分 +10 下品灵石）----
+      if (p === '/api/me/signin' && method === 'POST') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const y = ymStr(), d = todayNum();
+        if (!u.signin) u.signin = {};
+        if ((u.signin[y] || []).includes(d)) return sendJson(res, 400, { error: '今天已经签到过啦' });
+        if (!u.signin[y]) u.signin[y] = [];
+        u.signin[y].push(d);
+        grantReward(u, SIGNIN_REWARD);
+        saveUsers();
+        return sendJson(res, 200, { ok: true, dates: u.signin[y], spirit: u.spirit, bonus: u.bonus, reward: SIGNIN_REWARD });
+      }
+
+      // ---- 个人中心：任务总览（每日任务 + 专属任务）----
+      if (p === '/api/me/tasks' && method === 'GET') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const today = todayStr(), dayStart = new Date(today + 'T00:00:00').getTime();
+        const daysLeft = Math.max(0, Math.ceil((NEWBIE_DAYS * 86400000 - (Date.now() - (u.createdAt || Date.now()))) / 86400000));
+        return sendJson(res, 200, {
+          date: today,
+          daily: DAILY_TASKS.map((t) => {
+            const key = `${today}:${t.id}`;
+            return { id: t.id, title: t.title, desc: t.desc, done: dailyTaskDone(u, t.id, dayStart), claimed: !!(u.tasks.daily && u.tasks.daily[key]) };
+          }),
+          newbie: { done: newbieDone(u), claimed: !!(u.tasks.newbie && u.tasks.newbie.claimed), locked: newbieLocked(u), daysLeft },
+          reward: { daily: DAILY_REWARD, newbie: NEWBIE_REWARD, signin: SIGNIN_REWARD },
+        });
+      }
+      // 领取每日任务奖励（每项一次）
+      const tclaim = p.match(/^\/api\/me\/tasks\/daily\/([^/]+)\/claim$/);
+      if (tclaim && method === 'POST') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const tid = tclaim[1];
+        const task = DAILY_TASKS.find((t) => t.id === tid);
+        if (!task) return sendJson(res, 404, { error: '任务不存在' });
+        const today = todayStr(), dayStart = new Date(today + 'T00:00:00').getTime();
+        if (!dailyTaskDone(u, tid, dayStart)) return sendJson(res, 400, { error: '任务还没完成哦' });
+        const key = `${today}:${tid}`;
+        if (u.tasks.daily && u.tasks.daily[key]) return sendJson(res, 400, { error: '该任务奖励已领取' });
+        if (!u.tasks.daily) u.tasks.daily = {};
+        u.tasks.daily[key] = Date.now();
+        grantReward(u, DAILY_REWARD);
+        saveUsers();
+        return sendJson(res, 200, { ok: true, spirit: u.spirit, bonus: u.bonus, reward: DAILY_REWARD });
+      }
+      // 领取专属任务奖励（新用户 30 天内）
+      if (p === '/api/me/tasks/newbie/claim' && method === 'POST') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        if (newbieLocked(u)) return sendJson(res, 400, { error: '专属任务已过期锁定（注册 30 天内有效）' });
+        if (!newbieDone(u)) return sendJson(res, 400, { error: '请先完成专属任务：填写个人资料' });
+        if (u.tasks.newbie && u.tasks.newbie.claimed) return sendJson(res, 400, { error: '专属任务奖励已领取' });
+        u.tasks.newbie = { claimed: true, claimedAt: Date.now() };
+        grantReward(u, NEWBIE_REWARD);
+        saveUsers();
+        return sendJson(res, 200, { ok: true, spirit: u.spirit, bonus: u.bonus, reward: NEWBIE_REWARD });
+      }
+
+      // ---- 个人中心：灵石兑换（100 低阶 = 1 高阶，仅相邻升阶）----
+      if (p === '/api/me/spirit/convert' && method === 'POST') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const b = JSON.parse(await readBody(req) || '{}');
+        const from = b.from, to = b.to;
+        const fi = SPIRIT_ORDER.indexOf(from), ti = SPIRIT_ORDER.indexOf(to);
+        if (fi < 0 || ti < 0) return sendJson(res, 400, { error: '灵石类型无效' });
+        if (ti !== fi + 1) return sendJson(res, 400, { error: '只能逐级向上兑换（下品→中品→上品→极品）' });
+        const need = SPIRIT_CONVERT_RATIO;
+        if ((u.spirit[from] || 0) < need) return sendJson(res, 400, { error: `灵石不足：需要 ${need} 枚${SPIRIT_NAMES[from]}` });
+        u.spirit[from] -= need;
+        u.spirit[to] = (u.spirit[to] || 0) + 1;
+        saveUsers();
+        return sendJson(res, 200, { ok: true, spirit: u.spirit });
+      }
+
+      // ---- 个人中心：商城（商品列表 + 我的灵石 + 已购状态）----
+      if (p === '/api/me/shop' && method === 'GET') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const owned = { rename: (u.renameCards || 0) > 0, title: !!(u.title2 && u.title2 !== ''), frame: !!(u.avatarFrame && u.avatarFrame !== '') };
+        return sendJson(res, 200, { spirit: u.spirit, items: SHOP_ITEMS, owned });
+      }
+      // 购买商品（灵石扣减）
+      const buy = p.match(/^\/api\/me\/shop\/([^/]+)\/buy$/);
+      if (buy && method === 'POST') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const item = SHOP_ITEMS.find((it) => it.id === buy[1]);
+        if (!item) return sendJson(res, 404, { error: '商品不存在' });
+        if ((u.spirit[item.unit] || 0) < item.price) return sendJson(res, 400, { error: `灵石不足：需要 ${item.price} 枚${SPIRIT_NAMES[item.unit]}` });
+        const b = JSON.parse(await readBody(req) || '{}');
+        u.spirit[item.unit] -= item.price;
+        if (item.id === 'rename') u.renameCards = (u.renameCards || 0) + 1;
+        else if (item.id === 'title') {
+          const t2 = (b.title2 || '').trim().slice(0, 12);
+          if (!t2) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '请输入称号内容' }); }
+          u.title2 = t2;
+        } else if (item.id === 'frame') u.avatarFrame = 'gold';
+        saveUsers();
+        return sendJson(res, 200, { ok: true, spirit: u.spirit, renameCards: u.renameCards, title2: u.title2, avatarFrame: u.avatarFrame });
       }
 
       // 外观配置为公开（无登录也可读，供首页展示团队定制背景）
@@ -549,11 +788,11 @@ async function requestHandler(req, res) {
         const list = users.map((u) => {
           const onlineSec = stats.onlineSec[u.email] || 0;
           const ms = msgs[u.email] || 0, dn = dones[u.email] || 0;
-          // onlineSec 单位为毫秒：÷60000 转分钟，在线每分钟=1分（在线10分钟=10分）；每条消息=1分；完成度不再计入
-          const score = Math.round(onlineSec / 60000) + ms;
+          // onlineSec 单位为毫秒：÷60000 转分钟，在线每分钟=1分（在线10分钟=10分）；每条消息=1分；另加签到/任务奖励分 bonus
+          const score = Math.round(onlineSec / 60000) + ms + (u.bonus || 0);
           const title = titleOf(score);
           const st = presence.get(u.email);
-          return { nickname: u.nickname, email: u.email, role: u.role, online: !!(st && now - st.ts < 15000), onlineSec, msgs: ms, done: dn, score, title };
+          return { nickname: u.nickname, email: u.email, role: u.role, online: !!(st && now - st.ts < 15000), onlineSec, msgs: ms, done: dn, score, title, title2: u.title2 || '', avatarFrame: u.avatarFrame || '', avatar: (u.profile && u.profile.avatar) || '' };
         });
         list.sort((a, b) => b.score - a.score);
         return sendJson(res, 200, { rank: list });
@@ -605,7 +844,7 @@ async function requestHandler(req, res) {
         const text = (b.text || '').trim();
         if (!text) return sendJson(res, 400, { error: '内容不能为空' });
         if (text.length > 2000) return sendJson(res, 400, { error: '内容过长（最多2000字）' });
-        moans.push({ id: crypto.randomUUID(), text, time: Date.now() });
+        moans.push({ id: crypto.randomUUID(), text, time: Date.now(), by: me }); // by 仅用于每日任务统计，前端不下发保持匿名
         saveMoans();
         return sendJson(res, 200, { ok: true });
       }
@@ -818,7 +1057,18 @@ async function requestHandler(req, res) {
         const t = todos.find((x) => x.id === tmd[2] && x.roomId === tmd[1]);
         if (!t) return sendJson(res, 404, { error: '代办不存在' });
         const b = JSON.parse(await readBody(req) || '{}');
-        if (typeof b.done === 'boolean') t.done = b.done;
+        if (typeof b.done === 'boolean' && b.done !== t.done) {
+          t.done = b.done;
+          if (b.done) {
+            t.doneBy = me; t.doneAt = Date.now();
+            if (t.by === me) { t.confirmed = true; t.confirmBy = me; t.confirmAt = Date.now(); }
+            else { t.confirmed = false; t.confirmBy = null; }
+          } else { t.doneBy = null; t.doneAt = null; t.confirmed = false; }
+        }
+        // 发布者确认他人完成的代办（每日任务5「协作完成」的前置）
+        if (b.confirm === true && t.by === me && t.done && !t.confirmed) {
+          t.confirmed = true; t.confirmBy = me; t.confirmAt = Date.now();
+        }
         if (b.text !== undefined) { const tx = (b.text || '').trim(); if (tx) t.text = tx.slice(0, 500); }
         saveTodos();
         return sendJson(res, 200, { todo: t });

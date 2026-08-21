@@ -473,22 +473,22 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .ptab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
 /* ---------- 媒体管理 ---------- */
-.media-grid { width: 100%; align-self: stretch; box-sizing: border-box; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; max-width: 1500px; margin: 0 auto; }
-.media-card { border: 1px solid var(--border); border-radius: 14px; background: var(--panel); overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow); }
-.media-thumb { width: 100%; align-self: stretch; box-sizing: border-box; background: #000; display: flex; align-items: center; justify-content: center; min-height: 200px; }
-.media-thumb video, .media-thumb audio { width: 100%; max-height: 320px; outline: none; display: block; }
-.media-thumb audio { min-height: 54px; }
-.media-thumb .media-type-badge { color: #fff; font-size: 13px; padding: 6px 12px; background: rgba(255,255,255,.15); border-radius: 8px; }
-.media-meta { padding: 10px 12px; display: flex; align-items: center; gap: 8px; }
-.media-name { flex: 1; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.media-size { font-size: 11.5px; color: var(--muted); margin-left: auto; flex-shrink: 0; }
-.media-by { font-size: 11.5px; color: var(--muted); padding: 0 12px 4px; }
-.media-del { margin: 0; flex: 0 0 auto; border: 1px solid var(--border); background: transparent; color: #d33; border-radius: 8px; padding: 7px; cursor: pointer; font-size: 13px; }
-.media-del:hover { background: rgba(221,51,51,.08); }
+.media-grid { width: 100%; min-width: 0; align-self: stretch; box-sizing: border-box; display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 18px; max-width: 1600px; margin: 0 auto; }
+.media-card { border: 1px solid var(--border); border-radius: 14px; background: var(--panel); overflow: hidden; display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; box-shadow: var(--shadow); }
+.media-container { width: 100%; box-sizing: border-box; background: #000; display: flex; align-items: center; justify-content: center; min-height: 200px; }
+.media-container video, .media-container audio { width: 100%; max-height: 340px; object-fit: contain; background: #000; outline: none; display: block; }
+.media-container audio { min-height: 54px; }
+.media-info { padding: 0 12px; display: flex; flex-direction: column; gap: 4px; }
+.media-title-row { display: flex; align-items: center; gap: 8px; }
+.media-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-size { font-size: 11.5px; color: var(--muted); flex-shrink: 0; }
+.media-by { font-size: 11.5px; color: var(--muted); }
 .media-uploading { padding: 24px; text-align: center; color: var(--muted); }
-.media-card-actions { display: flex; gap: 8px; margin: 0 12px 12px; }
-.media-bg-btn { flex: 1; border: 1px solid var(--border); background: var(--accent-soft, #eef3ff); color: var(--accent, #2d6cff); border-radius: 8px; padding: 7px; cursor: pointer; font-size: 13px; }
+.media-bg-btn, .media-del { margin: 0 12px; border-radius: 8px; padding: 8px; cursor: pointer; font-size: 13px; }
+.media-bg-btn { border: 1px solid var(--border); background: var(--accent-soft, #eef3ff); color: var(--accent, #2d6cff); }
 .media-bg-btn:hover { background: var(--accent, #2d6cff); color: #fff; }
+.media-del { border: 1px solid var(--border); background: transparent; color: #d33; }
+.media-del:hover { background: rgba(221,51,51,.08); }
 
 /* ---------- 全局后台媒体悬浮控制条（半透明、可伸缩） ---------- */
 .media-bar {
@@ -574,4 +574,109 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
   .feat-card b { font-size: 12.5px; }
   .feat-ico { font-size: 17px; }
   .panel { min-height: 0; }
+}
+
+/* ---------- 个人中心 ---------- */
+.me-tabs { display: flex; gap: 8px; padding: 12px 22px 0; flex-wrap: wrap; }
+.me-tab {
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  border-radius: 10px; padding: 8px 16px; cursor: pointer; font-size: 13.5px;
+}
+.me-tab.active { background: var(--accent, #2d6cff); border-color: var(--accent, #2d6cff); color: #fff; }
+.me-body { padding-top: 12px; gap: 14px; }
+.me-pane { display: flex; flex-direction: column; gap: 14px; max-width: 860px; width: 100%; margin: 0 auto; }
+.me-card {
+  border: 1px solid var(--border); border-radius: 14px; background: var(--panel);
+  padding: 18px 20px; box-shadow: var(--shadow);
+}
+.me-card-t { margin: 0 0 12px; font-size: 15.5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.me-hint { font-size: 12px; color: var(--muted); }
+.me-avatar-row { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.me-avatar {
+  width: 64px; height: 64px; border-radius: 50%; overflow: hidden; flex: none;
+  background: var(--accent-soft, #eef3ff); color: var(--accent, #2d6cff);
+  display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 600;
+  border: 2px solid var(--border);
+}
+.me-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.me-avatar.frame-gold { border: 3px solid #d4a017; box-shadow: 0 0 12px rgba(212,160,23,.45); }
+.me-avatar-info { min-width: 0; }
+.me-nick { font-size: 16px; font-weight: 600; }
+.me-title2 { font-size: 12px; color: #d4a017; border: 1px solid #d4a01755; border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
+.me-sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.me-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; font-size: 13px; color: var(--muted); }
+.me-field .input { color: var(--text); }
+.me-nick-row { display: flex; gap: 8px; }
+.me-avatar-btn { width: fit-content; }
+.me-card-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+
+/* 签到日历 */
+.signin-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 10px 0 4px; }
+.signin-cell {
+  text-align: center; padding: 7px 2px; border-radius: 8px; font-size: 12.5px;
+  background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+}
+.signin-cell.today { border-color: var(--accent, #2d6cff); color: var(--accent, #2d6cff); font-weight: 600; }
+.signin-cell.signed { background: #2e7d3222; color: #2e7d32; border-color: #2e7d3244; font-weight: 600; }
+
+/* 任务列表 */
+.task-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px;
+}
+.task-row.done { background: #2e7d320d; }
+.task-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.task-info b { font-size: 13.5px; }
+.task-act { flex: none; }
+.task-claim { padding: 6px 12px; font-size: 12.5px; }
+.task-claimed { color: #2e7d32; font-size: 12.5px; font-weight: 600; }
+.task-pending { color: var(--muted); font-size: 12px; }
+.newbie-box { padding: 4px 2px; }
+.newbie-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* 灵石 */
+.spirit-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0; }
+.spirit-item {
+  text-align: center; padding: 14px 6px; border: 1px solid var(--border); border-radius: 12px;
+  display: flex; flex-direction: column; gap: 4px; background: var(--bg);
+}
+.spirit-item b { font-size: 18px; }
+.spirit-item em { font-style: normal; font-size: 12px; color: var(--muted); }
+.spirit-icon { font-size: 22px; }
+.spirit-item.rare { border-color: #d4a01788; background: #d4a0170d; }
+.convert-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.convert-btn { font-size: 12px; }
+
+/* 商城 */
+.shop-list { display: flex; flex-direction: column; gap: 10px; }
+.shop-item {
+  display: flex; align-items: center; gap: 12px; padding: 12px;
+  border: 1px solid var(--border); border-radius: 12px;
+}
+.shop-ico { font-size: 26px; flex: none; }
+.shop-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.shop-price { flex: none; font-size: 12.5px; color: var(--accent, #2d6cff); font-weight: 600; }
+.shop-owned { flex: none; color: #2e7d32; font-size: 12.5px; font-weight: 600; }
+.shop-buy { padding: 6px 14px; font-size: 12.5px; }
+
+/* 活跃榜头像/称号 */
+.member-ava { width: 24px; height: 24px; border-radius: 50%; overflow: hidden; flex: none; border: 2px solid var(--border); display: inline-flex; }
+.member-ava img { width: 100%; height: 100%; object-fit: cover; }
+.member-ava.frame-gold { border-color: #d4a017; }
+.member-title2 { font-size: 10.5px; color: #d4a017; border: 1px solid #d4a01755; border-radius: 5px; padding: 0 4px; margin-left: 4px; flex: none; }
+
+/* 代办：确认完成 */
+.todo-confirm {
+  flex: none; border: 1px solid #2e7d3255; background: #2e7d3211; color: #2e7d32;
+  border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+}
+.todo-confirm:hover { background: #2e7d32; color: #fff; }
+.todo-wait { flex: none; font-size: 11.5px; color: #b26a00; }
+
+@media (max-width: 560px) {
+  .spirit-row { grid-template-columns: repeat(2, 1fr); }
+  .me-tabs { padding: 10px 12px 0; }
+  .me-body { padding: 10px 12px; }
+  .me-card { padding: 14px; }
+  .shop-item { flex-wrap: wrap; }
 }

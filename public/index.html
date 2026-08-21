@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>协作台 · 企业团队私有协作空间</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='14' fill='%232563eb'/%3E%3Crect x='16' y='18' width='32' height='5' rx='2.5' fill='white' opacity='0.95'/%3E%3Crect x='16' y='29' width='22' height='5' rx='2.5' fill='white' opacity='0.8'/%3E%3Crect x='16' y='40' width='28' height='5' rx='2.5' fill='white' opacity='0.65'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="./styles.css?v=20260821g" />
+  <link rel="stylesheet" href="./styles.css?v=20260821j" />
 </head>
 <body data-theme="blue">
   <div id="bgLayer"></div>
@@ -158,7 +158,8 @@
       <button id="newTask" class="btn-new">+ 新建任务</button>
       <div id="roomList" class="room-list"></div>
       <div class="side-foot">
-        <span id="meName" class="me-name"></span>
+        <span id="meName" class="me-name" title="点击进入个人中心" data-act="view" data-view="me"></span>
+        <button id="meBtn" class="btn-ghost" title="个人中心">👤 管理</button>
         <button id="logout" class="btn-ghost">退出</button>
       </div>
     </aside>
@@ -261,6 +262,25 @@
       </section>
     </div>
   </div>
+
+  <!-- 页面：个人中心（资料 / 签到任务 / 商城灵石） -->
+  <section id="page-me" class="page hidden">
+    <header class="page-head">
+      <button class="btn-ghost" data-act="view" data-view="main">← 返回工作台</button>
+      <h2>个人中心</h2>
+      <span class="page-sub">我的资料 · 签到任务 · 灵石商城</span>
+    </header>
+    <div class="me-tabs">
+      <button class="me-tab active" data-me="profile">👤 个人资料</button>
+      <button class="me-tab" data-me="tasks">📅 签到与任务</button>
+      <button class="me-tab" data-me="shop">🛒 商城与灵石</button>
+    </div>
+    <div class="page-body me-body">
+      <div id="meProfile" class="me-pane"></div>
+      <div id="meTasks" class="me-pane hidden"></div>
+      <div id="meShop" class="me-pane hidden"></div>
+    </div>
+  </section>
 
   <!-- 页面：媒体管理（原工作日报板块改造） -->
   <section id="page-media" class="page hidden">
@@ -490,6 +510,6 @@
   </div>
 
   <script src="./config.js?v=20260821b"></script>
-  <script src="./app.js?v=20260821b"></script>
+  <script src="./app.js?v=20260821j"></script>
 </body>
 </html>

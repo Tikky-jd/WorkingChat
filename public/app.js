@@ -758,7 +758,22 @@ $('#genInvite').onclick = async () => {
 };
 
 // ---------- 视图切换（主界面 ↔ 功能页面）----------
+let currentView = 'main';
 function goView(name) {
+  const prev = currentView;
+  currentView = name;
+  // 离开媒体页时，若页内仍有媒体在播放，转入后台播放器（音乐/视频继续，并浮现控制条）
+  if (prev === 'media' && name !== 'media') {
+    let playing = null;
+    document.querySelectorAll('#page-media .media-card video, #page-media .media-card audio')
+      .forEach((el) => { if (!el.paused && !playing) playing = el; });
+    if (playing) {
+      const card = playing.closest('.media-card');
+      const nameEl = card && card.querySelector('.media-name');
+      setMedia(playing.currentSrc || playing.src, nameEl ? nameEl.textContent : '媒体', playing.tagName === 'VIDEO', playing.currentTime);
+      playing.pause();
+    }
+  }
   const isMain = name === 'main';
   show($('#app'), isMain);
   show($('#page-media'), name === 'media');
@@ -786,6 +801,10 @@ document.addEventListener('click', (e) => {
   else if (act === 'delvote') delVote(el.dataset.id);
   else if (act === 'delmoan') delMoan(el.dataset.id);
   else if (act === 'delmedia') delMedia(el.dataset.id);
+  else if (act === 'mediabg') {
+    pauseInlineMedia();
+    setMedia(BASE + el.dataset.src, el.dataset.name, el.dataset.video === '1');
+  }
   else if (act === 'openimg') window.open(el.dataset.src);
   else if (act === 'clearimg') clearPendingImage();
   else if (act === 'vote') vote(el.dataset.vid, Number(el.dataset.idx));
@@ -829,7 +848,10 @@ function renderMedia() {
         <span class="media-size">${fmtSize(m.size)}</span>
       </div>
       <div class="media-by">上传者：${escapeHtml(m.uploadedBy || '')}</div>
-      ${canDel ? `<button class="media-del" data-act="delmedia" data-id="${m.id}">删除</button>` : ''}
+      <div class="media-card-actions">
+        <button class="media-bg-btn" data-act="mediabg" data-src="${m.path}" data-name="${escapeHtml(m.name)}" data-video="${isVideo ? '1' : '0'}">🎧 后台播放</button>
+        ${canDel ? `<button class="media-del" data-act="delmedia" data-id="${m.id}">删除</button>` : ''}
+      </div>
     </div>`;
   }).join('');
 }
@@ -859,6 +881,41 @@ async function delMedia(id) {
   catch (e) { alert(e.message); }
 }
 window.delMedia = delMedia;
+
+// ---------- 全局后台媒体播放器（离开媒体页后继续播放 + 浮动控制条） ----------
+const bgMedia = $('#bgMedia');
+function pauseInlineMedia() {
+  document.querySelectorAll('#page-media .media-card video, #page-media .media-card audio')
+    .forEach((el) => { try { el.pause(); } catch {} });
+}
+function updateMediaIcon() { $('#mediaPlay').textContent = bgMedia.paused ? '▶' : '⏸'; }
+function setMedia(src, name, isVideo, start) {
+  bgMedia.src = src;
+  if (start) { try { bgMedia.currentTime = start; } catch {} }
+  $('#mediaName').textContent = name || '媒体';
+  $('#mediaBar').classList.toggle('show-video', !!isVideo);
+  show($('#mediaBar'), true);
+  bgMedia.play().then(updateMediaIcon).catch(() => {});
+}
+// 在媒体页直接点开内联播放器时，暂停后台播放器，避免双声
+$('#page-media').addEventListener('play', (e) => {
+  if (e.target && e.target.matches && e.target.matches('video, audio')) bgMedia.pause();
+}, true);
+bgMedia.addEventListener('play', updateMediaIcon);
+bgMedia.addEventListener('pause', updateMediaIcon);
+bgMedia.addEventListener('ended', updateMediaIcon);
+bgMedia.addEventListener('timeupdate', () => {
+  const dur = bgMedia.duration || 0, cur = bgMedia.currentTime || 0;
+  $('#mediaProg').style.width = (dur ? (cur / dur * 100) : 0) + '%';
+});
+$('#mediaPlay').onclick = () => { if (bgMedia.paused) bgMedia.play().catch(() => {}); else bgMedia.pause(); };
+$('#mediaStop').onclick = () => { bgMedia.pause(); try { bgMedia.currentTime = 0; } catch {} show($('#mediaBar'), false); };
+$('#mediaToggle').onclick = () => $('#mediaBar').classList.toggle('collapsed');
+$('#mediaProgWrap').onclick = (e) => {
+  const dur = bgMedia.duration; if (!dur) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  try { bgMedia.currentTime = ((e.clientX - r.left) / r.width) * dur; } catch {}
+};
 
 // ---------- 团队投票 ----------
 let voteOptCount = 2;

@@ -482,9 +482,55 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .media-name { flex: 1; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .media-size { font-size: 11.5px; color: var(--muted); margin-left: auto; flex-shrink: 0; }
 .media-by { font-size: 11.5px; color: var(--muted); padding: 0 12px 4px; }
-.media-del { margin: 0 12px 12px; border: 1px solid var(--border); background: transparent; color: #d33; border-radius: 8px; padding: 7px; cursor: pointer; font-size: 13px; }
+.media-del { margin: 0; flex: 0 0 auto; border: 1px solid var(--border); background: transparent; color: #d33; border-radius: 8px; padding: 7px; cursor: pointer; font-size: 13px; }
 .media-del:hover { background: rgba(221,51,51,.08); }
 .media-uploading { padding: 24px; text-align: center; color: var(--muted); }
+.media-card-actions { display: flex; gap: 8px; margin: 0 12px 12px; }
+.media-bg-btn { flex: 1; border: 1px solid var(--border); background: var(--accent-soft, #eef3ff); color: var(--accent, #2d6cff); border-radius: 8px; padding: 7px; cursor: pointer; font-size: 13px; }
+.media-bg-btn:hover { background: var(--accent, #2d6cff); color: #fff; }
+
+/* ---------- 全局后台媒体悬浮控制条（半透明、可伸缩） ---------- */
+.media-bar {
+  position: fixed; right: 20px; bottom: 20px; z-index: 9999;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; max-width: 340px;
+  background: rgba(28, 32, 40, 0.62);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px; color: #fff;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+}
+.media-toggle {
+  flex: none; width: 26px; height: 26px; border: none; border-radius: 8px;
+  background: rgba(255, 255, 255, 0.14); color: #fff; cursor: pointer; font-size: 13px; line-height: 1;
+}
+.media-toggle:hover { background: rgba(255, 255, 255, 0.26); }
+.media-thumb {
+  flex: none; width: 46px; height: 46px; border-radius: 9px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.12); display: flex; align-items: center; justify-content: center;
+}
+.media-icon { font-size: 22px; }
+.bg-media { width: 100%; height: 100%; object-fit: cover; border-radius: 9px; display: none; }
+.media-bar.show-video .bg-media { display: block; }
+.media-bar.show-video .media-icon { display: none; }
+.media-info { flex: 1; min-width: 0; }
+.media-title {
+  font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.media-prog { margin-top: 6px; height: 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.2); cursor: pointer; }
+.media-prog-fill { height: 100%; width: 0; border-radius: 3px; background: #4f9bff; }
+.media-actions { flex: none; display: flex; gap: 6px; }
+.media-btn {
+  width: 32px; height: 32px; border: none; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.16); color: #fff; cursor: pointer; font-size: 14px; line-height: 1;
+}
+.media-btn:hover { background: rgba(255, 255, 255, 0.3); }
+.media-bar.collapsed .media-info, .media-bar.collapsed .media-actions { display: none; }
+.media-bar.collapsed { padding: 8px; gap: 8px; }
+
+@media (max-width: 560px) {
+  .media-bar { right: 10px; left: 10px; bottom: 10px; max-width: none; }
+}
 
 /* ---------- 移动端响应式（≤860px） ---------- */
 @media (max-width: 860px) {

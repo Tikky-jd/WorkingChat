@@ -475,7 +475,7 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 /* ---------- 媒体管理 ---------- */
 .media-grid { width: 100%; align-self: stretch; box-sizing: border-box; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; max-width: 1500px; margin: 0 auto; }
 .media-card { border: 1px solid var(--border); border-radius: 14px; background: var(--panel); overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow); }
-.media-thumb { background: #000; display: flex; align-items: center; justify-content: center; min-height: 200px; }
+.media-thumb { width: 100%; align-self: stretch; box-sizing: border-box; background: #000; display: flex; align-items: center; justify-content: center; min-height: 200px; }
 .media-thumb video, .media-thumb audio { width: 100%; max-height: 320px; outline: none; display: block; }
 .media-thumb audio { min-height: 54px; }
 .media-thumb .media-type-badge { color: #fff; font-size: 13px; padding: 6px 12px; background: rgba(255,255,255,.15); border-radius: 8px; }

@@ -327,6 +327,9 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .page-head { display: flex; align-items: center; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .page-head h2 { margin: 0; font-size: 17px; }
 .page-sub { font-size: 12.5px; color: var(--muted); margin-right: auto; }
+/* 页头：副标题已删除，右侧操作按钮/搜索框保持靠右 */
+.page-head > label.btn-new, .page-head > .btn-new, .page-head > .kb-search, .page-head > .kb-new-wrap { margin-left: auto; }
+.page-head > label.btn-new { margin: 0 0 0 auto; padding: 9px 16px; }
 .page-body { flex: 1; overflow: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 
 /* ---------- 团队投票 ---------- */
@@ -378,6 +381,16 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .kb-del:hover { background: rgba(0, 0, 0, .1); color: #d33; }
 .kb-editor { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); overflow: hidden; }
 .kb-empty { margin: auto; color: var(--muted); font-size: 13.5px; }
+/* 移动端返回文档列表按钮（桌面隐藏，≤860px 显示） */
+.kb-back {
+  display: none; align-self: flex-start; margin: 10px 12px 0;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.kb-back:hover { border-color: var(--primary); color: var(--primary); }
+/* 知识库「＋ 新建」下拉容器（修正 .btn-new 全局 margin） */
+.kb-new-wrap { position: relative; }
+.kb-new-wrap .btn-new { margin: 0; white-space: nowrap; }
 .kb-edit { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .kb-title { border: 0; outline: none; font-size: 19px; font-weight: 500; padding: 16px 20px 6px; background: transparent; color: var(--text); }
 .kb-meta { display: flex; align-items: center; gap: 12px; padding: 0 20px 10px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
@@ -598,6 +611,16 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
   .feat-card b { font-size: 12.5px; }
   .feat-ico { font-size: 17px; }
   .panel { min-height: 0; }
+
+  /* 知识库移动端：两页切换（先列表，点文档后编辑器全屏、可返回） */
+  .kb-body { padding: 10px 12px; gap: 10px; }
+  .kb-tree { width: 100%; }
+  .kb-editor { display: none; }
+  .kb-body.kb-editing .kb-tree { display: none; }
+  .kb-body.kb-editing .kb-editor { display: flex; }
+  .kb-back { display: inline-flex; }
+  /* 移动端返回按钮精简为「返回」 */
+  .back-detail { display: none; }
 }
 
 /* ---------- 个人中心 ---------- */
@@ -712,4 +735,56 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .me-card { padding: 14px; }
   .shop-item { flex-wrap: wrap; }
   .shop-side { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; min-width: 0; }
+}
+
+/* ===================== 动效系统（克制、有质感） ===================== */
+
+/* ① 按钮点击：按压缩放反馈（disabled 不触发） */
+button:not(:disabled):active { transform: scale(.96); }
+.btn-primary, .btn-ghost, .btn-new, .panel-add, .shop-buy, .task-claim, .tool-btn, .media-bg-btn, .media-del, .panel-act, .convert-btn {
+  transition: transform .12s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease, color .2s ease, filter .2s ease;
+}
+.btn-primary:hover { box-shadow: 0 4px 14px color-mix(in srgb, var(--primary) 35%, transparent); }
+
+/* ② 卡片 hover：轻微上浮 + 阴影加深（列表/卡片类） */
+.room-item, .member-item, .shop-item, .feat-card, .media-card, .vote-card, .moan-card, .daily-room, .signin-cell {
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+}
+.room-item:hover, .member-item:hover, .shop-item:hover, .feat-card:hover, .media-card:hover, .vote-card:hover, .moan-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(20, 30, 60, .10);
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+.signin-cell:hover { transform: translateY(-1px); border-color: var(--primary); }
+
+/* ③ 消息出现：上滑淡入（仅新消息，历史重绘不加） */
+@keyframes msgIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes imgIn { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+.msg-row.msg-new { animation: msgIn .28s cubic-bezier(.22, .68, .38, 1); }
+.msg-row.msg-new .msg-img { animation: imgIn .32s ease; }
+
+/* ④ 页面切换：淡入 + 上移（每次进入功能页播放一次） */
+@keyframes pageIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.page { animation: pageIn .28s cubic-bezier(.22, .68, .38, 1); }
+
+/* ⑤ 新增代办：下滑淡入 + 完成勾选时的绿色反馈 */
+@keyframes todoIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.todo-item.todo-new { animation: todoIn .24s cubic-bezier(.22, .68, .38, 1); }
+.todo-item { transition: background .25s ease, opacity .25s ease; }
+.todo-item.done { background: #2e7d320d; }
+.todo-item.done .todo-text { transition: color .25s ease, opacity .25s ease; }
+@keyframes todoDone { 0% { transform: scale(1); } 45% { transform: scale(1.03); } 100% { transform: scale(1); } }
+.todo-item.todo-just-done { animation: todoDone .35s ease; background: #2e7d3218; }
+
+/* ⑥ 活跃榜超越/排名上升：金色脉冲提示 */
+@keyframes rankUp {
+  0% { box-shadow: 0 0 0 0 rgba(212, 160, 23, .55); background-color: #d4a01714; }
+  60% { box-shadow: 0 0 0 8px rgba(212, 160, 23, 0); background-color: #d4a01714; }
+  100% { box-shadow: 0 0 0 0 rgba(212, 160, 23, 0); background-color: transparent; }
+}
+.member-item.rank-up { animation: rankUp 1.15s ease; }
+
+/* ⑦ 无障碍：系统偏好减弱动效时全部降级 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

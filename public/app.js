@@ -217,6 +217,7 @@ async function proceedEnter(id) {
 }
 async function enterRoom(id) {
   currentRoomId = id;
+  window.__msgRendered = false; // 增量渲染标记重置：切换房间后下次全量渲染
   unread[id] = 0; updateFavicon(); // 进入任务清零未读（renderRooms 随后刷新列表角标）
   editingMid = null; // 进入新任务清空重编辑态
   const idx = rooms.findIndex((r) => r.id === id);
@@ -239,48 +240,92 @@ async function enterRoom(id) {
 }
 
 // ---------- 消息 ----------
+// 消息加载防抖合并：SSE 与发送后 loadMessages 可能并发触发 → 合并为一次渲染，避免重绘掐断入场动画
+let msgLoadInFlight = false, msgLoadPending = false;
 async function loadMessages() {
   if (!currentRoomId) return;
-  const { messages } = await api('GET', `/api/rooms/${currentRoomId}/messages`);
-  const prev = curMessages || [];
-  renderMessages(messages);
-  // 轮询兜底：SSE 断线/服务器未关 Nginx 缓冲时，后台标签页也要响"滴滴"+亮角标
-  // （2s 内 SSE 刚推过则跳过，避免与 SSE 路径重复提示）
-  if (document.hidden && prev.length && Date.now() - lastSseMsgAt > 2000) {
-    const fresh = messages.filter((m) => !m.recalled && !prev.some((p) => p.id === m.id));
-    if (fresh.length) { bumpUnread(currentRoomId); notifyNewMsg(currentRoomId); }
+  if (msgLoadInFlight) { msgLoadPending = true; return; }
+  msgLoadInFlight = true;
+  try {
+    const { messages } = await api('GET', `/api/rooms/${currentRoomId}/messages`);
+    const prev = curMessages || [];
+    renderMessages(messages);
+    // 轮询兜底：SSE 断线/服务器未关 Nginx 缓冲时，后台标签页也要响"滴滴"+亮角标
+    // （2s 内 SSE 刚推过则跳过，避免与 SSE 路径重复提示）
+    if (document.hidden && prev.length && Date.now() - lastSseMsgAt > 2000) {
+      const fresh = messages.filter((m) => !m.recalled && !prev.some((p) => p.id === m.id));
+      if (fresh.length) { bumpUnread(currentRoomId); notifyNewMsg(currentRoomId); }
+    }
+  } catch {}
+  msgLoadInFlight = false;
+  if (msgLoadPending) { msgLoadPending = false; loadMessages(); }
+}
+// 消息增量渲染：只追加新增 / 移除消失 / 更新变化，绝不整表清空重建。
+// 这样新消息的入场动画（msg-new）一旦加上就不会被后续重绘抹掉；历史浏览位置也不受影响。
+function buildMsgEl(m, animate) {
+  const row = document.createElement('div');
+  row.dataset.mid = m.id;
+  if (m.recalled) {
+    row.className = 'msg-row recalled-row';
+    row.innerHTML = `<div class="msg-recalled">${escapeHtml(m.nickname || '成员')} 撤回了一条消息</div>`;
+    return row;
   }
+  row.className = 'msg-row ' + (m.user === me ? 'me' : 'other');
+  if (animate) row.classList.add('msg-new');
+  let inner = '';
+  if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" data-act="openimg" data-src="${BASE + m.image}" />`;
+  if (m.text) inner += `<div class="text">${escapeHtml(m.text)}</div>`;
+  const own = m.user === me;
+  const delBtn = (myRole === 'admin' || own) && !m.recalled ? `<button class="msg-del" title="删除此消息" data-act="delmsg" data-id="${m.id}">✕</button>` : '';
+  const editedTag = m.edited ? '<span class="msg-edited">已编辑</span>' : '';
+  const title2Tag = m.title2 ? `<span class="msg-title2">${escapeHtml(m.title2)}</span>` : '';
+  row.innerHTML = `<div class="bubble"><div class="meta"><span class="who">${escapeHtml(m.nickname)}</span>${title2Tag}<span class="time">${fmtTime(m.time)}</span>${editedTag}${delBtn}</div>${inner}</div>`;
+  return row;
 }
 function renderMessages(list) {
+  const prev = curMessages || [];
   curMessages = list || [];
   const box = $('#messages');
-  // 关键：在清空 DOM 之前记录滚动状态，否则清空后 scrollHeight/scrollTop 归零，atBottom 永远为 true → 历史被强制回滚底部
+  // 关键：在改动 DOM 之前记录滚动状态
   const wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   const prevScrollTop = box.scrollTop;
-  box.innerHTML = '';
-  if (!list.length) { box.innerHTML = '<div class="empty">还没有消息，发一条吧</div>'; box.scrollTop = 0; updateScrollBtn(); return; }
+  // 首次渲染：整段历史一次性渲染（无动画，避免全列表闪动）
+  if (!window.__msgRendered) {
+    window.__msgRendered = true;
+    box.innerHTML = '';
+    if (!list.length) { box.innerHTML = '<div class="empty">还没有消息，发一条吧</div>'; box.scrollTop = 0; updateScrollBtn(); return; }
+    list.forEach((m) => box.appendChild(buildMsgEl(m, false)));
+    if (wasAtBottom) box.scrollTop = box.scrollHeight; else box.scrollTop = prevScrollTop;
+    updateScrollBtn();
+    return;
+  }
+  // 增量 diff
+  const prevIds = new Set(prev.map((m) => m.id));
+  const curIds = new Set(list.map((m) => m.id));
+  let appended = false;
+  // 1) 追加新增消息（末尾，带动画）
+  list.forEach((m) => { if (!prevIds.has(m.id)) { box.appendChild(buildMsgEl(m, true)); appended = true; } });
+  // 2) 移除已消失的消息（删除）
+  prev.forEach((m) => { if (!curIds.has(m.id)) { const el = box.querySelector(`[data-mid="${m.id}"]`); if (el) el.remove(); } });
+  // 3) 更新状态变化（撤回 / 编辑文本）
   list.forEach((m) => {
-    const row = document.createElement('div');
-    row.dataset.mid = m.id;
-    if (m.recalled) {
-      row.className = 'msg-row recalled-row';
-      row.innerHTML = `<div class="msg-recalled">${escapeHtml(m.nickname || '成员')} 撤回了一条消息</div>`;
-      box.appendChild(row);
-      return;
+    const el = box.querySelector(`[data-mid="${m.id}"]`);
+    if (!el) return;
+    const pm = prev.find((p) => p.id === m.id);
+    if (!pm) return;
+    if (m.recalled !== pm.recalled) { el.replaceWith(buildMsgEl(m, false)); return; }
+    if (m.text !== pm.text) {
+      const t = el.querySelector('.text');
+      if (t) t.textContent = m.text;
+      if (m.edited && !el.querySelector('.msg-edited')) {
+        const s = document.createElement('span'); s.className = 'msg-edited'; s.textContent = '已编辑';
+        const meta = el.querySelector('.meta'); if (meta) meta.appendChild(s);
+      }
     }
-    row.className = 'msg-row ' + (m.user === me ? 'me' : 'other');
-    let inner = '';
-    if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" data-act="openimg" data-src="${BASE + m.image}" />`;
-    if (m.text) inner += `<div class="text">${escapeHtml(m.text)}</div>`;
-    const own = m.user === me;
-    const delBtn = (myRole === 'admin' || own) && !m.recalled ? `<button class="msg-del" title="删除此消息" data-act="delmsg" data-id="${m.id}">✕</button>` : '';
-    const editedTag = m.edited ? '<span class="msg-edited">已编辑</span>' : '';
-    const title2Tag = m.title2 ? `<span class="msg-title2">${escapeHtml(m.title2)}</span>` : '';
-    row.innerHTML = `<div class="bubble"><div class="meta"><span class="who">${escapeHtml(m.nickname)}</span>${title2Tag}<span class="time">${fmtTime(m.time)}</span>${editedTag}${delBtn}</div>${inner}</div>`;
-    box.appendChild(row);
   });
+  if (!list.length && box.querySelector('.msg-row') === null) box.innerHTML = '<div class="empty">还没有消息，发一条吧</div>';
   // 仅在用户本就贴近底部时才回到底部；否则保留其历史浏览位置
-  if (wasAtBottom) box.scrollTop = box.scrollHeight;
+  if (wasAtBottom && appended) box.scrollTop = box.scrollHeight;
   else box.scrollTop = prevScrollTop;
   updateScrollBtn();
 }
@@ -675,10 +720,15 @@ function renderTodos(list) {
   const box = $('#todoList');
   if (!currentRoomId) { box.innerHTML = '<div class="empty">请先选择左侧任务</div>'; return; }
   if (!list.length) { box.innerHTML = '<div class="empty">暂无代办，添加一项吧</div>'; return; }
+  // 动效：仅新增代办播放入场动画（首次加载整列表不加，避免全列表闪动）
+  const firstTodoRender = window.__todoIds === undefined;
+  const prevTodoIds = new Set(window.__todoIds || []);
+  window.__todoIds = list.map((t) => t.id);
   box.innerHTML = '';
   list.forEach((t) => {
     const row = document.createElement('div');
     row.className = 'todo-item' + (t.done ? ' done' : '');
+    if (!firstTodoRender && t.id && !prevTodoIds.has(t.id)) row.classList.add('todo-new');
     const isMine = t.by === me;
     // 别人完成了我布置的代办 → 我确认后任务5才成立；我完成的别人代办 → 等待对方确认
     const needConfirm = t.done && isMine && t.doneBy && t.doneBy !== me && !t.confirmed;
@@ -687,7 +737,7 @@ function renderTodos(list) {
     if (waitConfirm) extra = '<span class="todo-wait">待发布者确认</span>';
     if (needConfirm) extra = `<button class="todo-confirm" data-tid="${t.id}">✓ 确认完成</button>`;
     row.innerHTML = `<label class="todo-check"><input type="checkbox" ${t.done ? 'checked' : ''}/><span class="todo-text">${escapeHtml(t.text)}</span></label>${extra}<button class="todo-x" title="删除">✕</button>`;
-    row.querySelector('input').onchange = () => toggleTodo(t.id, row.querySelector('input').checked);
+    row.querySelector('input').onchange = () => { row.classList.add('todo-just-done'); toggleTodo(t.id, row.querySelector('input').checked); };
     row.querySelector('.todo-x').onclick = () => deleteTodo(t.id);
     const cf = row.querySelector('.todo-confirm');
     if (cf) cf.onclick = () => confirmTodo(t.id);
@@ -741,11 +791,16 @@ async function loadRank() {
 }
 function renderRank(list) {
   const box = $('#memberList');
+  // 动效：排名比上次上升（名次数字变小）的成员播金色脉冲提示；首次加载不触发
+  const prevRankIdx = window.__rankIdx || {};
+  window.__rankIdx = {};
+  list.forEach((m, i) => { window.__rankIdx[m.email] = i; });
   box.innerHTML = '';
   if (!list.length) { box.innerHTML = '<div class="empty">暂无数据</div>'; return; }
   list.forEach((m, i) => {
     const row = document.createElement('div');
     row.className = 'member-item' + (m.glow ? ' glow-gold' : '');
+    if (prevRankIdx[m.email] !== undefined && i < prevRankIdx[m.email]) row.classList.add('rank-up');
     const mins = Math.floor(m.onlineSec / 60000); // onlineSec 单位是毫秒 → 转分钟
     const role = m.role === 'admin' ? '<span class="member-role">管理员</span>' : '';
     const avatarHtml = m.avatar ? `<span class="member-ava ${m.avatarFrame === 'gold' ? 'frame-gold' : ''}"><img src="${BASE + m.avatar}" alt="" /></span>` : '';
@@ -1490,8 +1545,15 @@ async function loadKb() {
     if (kbCurrent && !kbDocs.find((d) => d.id === kbCurrent)) kbCurrent = null;
     renderKbTree();
     if (!kbCurrent) { show($('#kbEdit'), false); show($('#kbEmpty'), true); }
+    kbMobileEditing(false); // 移动端：默认回到文档列表（桌面端无样式影响）
   } catch (e) { $('#kbTree').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
 }
+// 知识库移动端两页切换：kb-editing=true 显示编辑器、false 显示文档列表（≤860px 生效，桌面无影响）
+function kbMobileEditing(on) {
+  const b = document.querySelector('.kb-body');
+  if (b) b.classList.toggle('kb-editing', on);
+}
+$('#kbBack').onclick = () => kbMobileEditing(false);
 function renderKbTree() {
   const box = $('#kbTree');
   box.innerHTML = '';
@@ -1548,6 +1610,7 @@ async function selectKbDoc(id) {
     $('#kbMoveFolder').disabled = !canEdit;
     setKbMode('view'); // 默认查看态：渲染预览、隐藏编辑器
     $('#kbPreview').innerHTML = renderMarkdown(doc.content);
+    kbMobileEditing(true); // 移动端：进入编辑/查看页（桌面端无样式影响）
     const sel = $('#kbMoveFolder');
     sel.innerHTML = '<option value="">根目录</option>' + kbFolders.map((f) => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
     sel.value = doc.folderId || '';
@@ -1756,13 +1819,30 @@ async function newKbDoc(folderId) {
   try { const { doc } = await api('POST', '/api/kb/docs', { folderId: folderId || null }); await loadKb(); await selectKbDoc(doc.id); setKbMode('edit'); $('#kbTitle').focus(); }
   catch (e) { alert(e.message); }
 }
-$('#kbNewDoc').onclick = () => newKbDoc(null);
-$('#kbNewFolder').onclick = async () => {
-  const name = prompt('文件夹名称：');
-  if (!name || !name.trim()) return;
-  try { await api('POST', '/api/kb/folders', { name: name.trim() }); await loadKb(); }
-  catch (e) { alert(e.message); }
+// 「＋ 新建」下拉：新建文档 / 新建文件夹
+$('#kbNewBtn').onclick = (e) => {
+  e.stopPropagation();
+  const menu = $('#kbNewMenu');
+  if (!menu.classList.contains('hidden')) { show(menu, false); return; }
+  const r = $('#kbNewBtn').getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.right - 170, window.innerWidth - 178)) + 'px';
+  menu.style.top = (r.bottom + 4) + 'px';
+  show(menu, true);
 };
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#kbNewMenu') && !e.target.closest('#kbNewBtn')) show($('#kbNewMenu'), false);
+});
+$('#kbNewMenu').querySelectorAll('.ctx-item').forEach((b) => {
+  b.onclick = () => {
+    show($('#kbNewMenu'), false);
+    if (b.dataset.kbnew === 'doc') newKbDoc(null);
+    else {
+      const name = prompt('文件夹名称：');
+      if (!name || !name.trim()) return;
+      api('POST', '/api/kb/folders', { name: name.trim() }).then(() => loadKb()).catch((e) => alert(e.message));
+    }
+  };
+});
 async function deleteKbDoc() {
   if (!kbCurrent || !confirm('确定删除这篇文档？')) return;
   try { await api('DELETE', `/api/kb/docs/${kbCurrent}`); kbCurrent = null; await loadKb(); }

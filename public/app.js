@@ -323,7 +323,7 @@ $('#fileInput').onchange = (e) => {
   const file = e.target.files[0];
   if (!file) return;
   if (!file.type.startsWith('image/')) { alert('仅支持图片文件'); e.target.value = ''; return; }
-  if (file.size > 100 * 1024 * 1024) { alert('图片不能超过 100MB'); e.target.value = ''; return; }
+  if (file.size > 10 * 1024 * 1024) { alert('图片不能超过 10MB'); e.target.value = ''; return; }
   const reader = new FileReader();
   reader.onload = () => { pendingImage = reader.result; renderImgChip(); };
   reader.readAsDataURL(file);
@@ -966,6 +966,7 @@ function renderProfileEdit() {
   $('#meAvatarFile').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
     if (!/^image\//.test(f.type)) { alert('仅支持图片文件'); e.target.value = ''; return; }
+    if (f.size > 10 * 1024 * 1024) { alert('图片过大（上限 10MB）'); e.target.value = ''; return; }
     const rd = new FileReader();
     rd.onload = async () => {
       try {
@@ -1259,14 +1260,26 @@ document.addEventListener('click', (e) => {
   else if (act === 'kbnewdoc') newKbDoc(el.dataset.folder);
 });
 
-// ---------- 媒体管理（原工作日报板块改造） ----------
+// ---------- 媒体管理（原工作日报板块改造；分页，每页 12 条） ----------
 let mediaList = [];
+let mediaHasMore = false;
 async function loadMedia() {
   try {
-    const d = await api('GET', '/api/media');
+    const d = await api('GET', '/api/media?limit=12');
     mediaList = d.media || [];
+    mediaHasMore = !!d.hasMore;
     renderMedia();
   } catch (e) { $('#mediaGrid').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+}
+async function loadMoreMedia() {
+  const btn = $('#mediaMoreBtn');
+  if (btn) { btn.textContent = '加载中…'; btn.disabled = true; }
+  try {
+    const d = await api('GET', `/api/media?limit=12&offset=${mediaList.length}`);
+    mediaList = mediaList.concat(d.media || []);
+    mediaHasMore = !!d.hasMore;
+    renderMedia();
+  } catch (e) { alert(e.message); if (btn) { btn.textContent = '加载更多'; btn.disabled = false; } }
 }
 function fmtSize(n) {
   if (!n) return '';
@@ -1296,11 +1309,16 @@ function renderMedia() {
       ${canDel ? `<button class="media-del" data-act="delmedia" data-id="${m.id}">删除</button>` : ''}
     </div>`;
   }).join('');
+  if (mediaHasMore) {
+    box.insertAdjacentHTML('beforeend', `<button class="media-more" id="mediaMoreBtn">加载更多（已显示 ${mediaList.length} 条）</button>`);
+    $('#mediaMoreBtn').onclick = loadMoreMedia;
+  }
 }
 $('#mediaFile').onchange = (e) => {
   const file = e.target.files[0];
   if (!file) return;
   if (!/^(video|audio)\//.test(file.type)) { alert('仅支持视频/音频文件（mp4/mp3 等）'); e.target.value = ''; return; }
+  if (file.size > 30 * 1024 * 1024) { alert('媒体文件过大（上限 30MB）'); e.target.value = ''; return; }
   const reader = new FileReader();
   reader.onload = async () => {
     const dataUrl = reader.result;
@@ -1620,7 +1638,7 @@ $('#kbImgInput').onchange = (e) => {
   e.target.value = '';
   if (!file) return;
   if (!file.type.startsWith('image/')) { alert('仅支持图片'); return; }
-  if (file.size > 100 * 1024 * 1024) { alert('图片不能超过 100MB'); return; }
+  if (file.size > 10 * 1024 * 1024) { alert('图片不能超过 10MB'); return; }
   const reader = new FileReader();
   reader.onload = async () => {
     try {

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const url = require('url');
+const zlib = require('zlib');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
@@ -314,7 +315,7 @@ function saveDataUrl(dataUrl, prefix) {
   if (!mm) throw new Error('仅支持图片');
   const ext = mm[2] === 'jpeg' ? 'jpg' : mm[2];
   const buf = Buffer.from(mm[3], 'base64');
-  if (buf.length > 100 * 1024 * 1024) throw new Error('图片超过 100MB 限制');
+  if (buf.length > 10 * 1024 * 1024) throw new Error('图片超过 10MB 限制');
   const fname = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
   fs.writeFileSync(path.join(UPLOADS_DIR, fname), buf);
   return '/uploads/' + fname;
@@ -354,8 +355,9 @@ function removeImageIfUnused(image) {
   if (stillUsed) return;
   try { fs.unlinkSync(path.join(UPLOADS_DIR, fname)); } catch {}
 }
-cleanOldMessages();
-setInterval(cleanOldMessages, 24 * 3600 * 1000);
+// 每月自动清理（30 天前消息 + 无用上传文件）：当前版本暂停，历史消息全部保留
+// cleanOldMessages();
+// setInterval(cleanOldMessages, 24 * 3600 * 1000);
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/x-m4v', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac' };
@@ -368,13 +370,52 @@ function serveStatic(req, res) {
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end('forbidden'); return; }
   if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
     // 禁用缓存：前端频繁迭代，避免浏览器/代理缓存旧版本导致功能不一致
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+    const mime = MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+    const hdrs = { 'Content-Type': mime, 'Cache-Control': 'no-cache, no-store, must-revalidate' };
+    // gzip 压缩文本类资源（js/css/html/svg/json 等），zlib 内置零依赖，降低重复加载流量
+    if (['.js', '.css', '.html', '.svg', '.json', '.md', '.txt', '.webmanifest'].includes(path.extname(filePath).toLowerCase())
+        && /gzip/.test(req.headers['accept-encoding'] || '')) {
+      const gz = zlib.gzipSync(fs.readFileSync(filePath));
+      hdrs['Content-Encoding'] = 'gzip';
+      hdrs['Content-Length'] = gz.length;
+      res.writeHead(200, hdrs); res.end(gz); return;
+    }
+    res.writeHead(200, hdrs);
     fs.createReadStream(filePath).pipe(res); return;
   }
   if (p.startsWith('/uploads/')) {
     const up = path.normalize(path.join(UPLOADS_DIR, p.replace('/uploads/', '')));
     if (up.startsWith(UPLOADS_DIR) && fs.existsSync(up) && fs.statSync(up).isFile()) {
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(up).toLowerCase()] || 'application/octet-stream' });
+      const stat = fs.statSync(up);
+      const total = stat.size;
+      const mime = MIME[path.extname(up).toLowerCase()] || 'application/octet-stream';
+      // 上传文件（媒体/图片/头像）文件名含时间戳+随机串，内容不可变 → 长缓存，重复播放/查看走浏览器缓存零流量
+      const cacheHdr = 'public, max-age=31536000, immutable';
+      // Range 分段：视频拖动进度条只拉需要的段落，避免整文件反复全量下载
+      const range = req.headers.range;
+      if (range) {
+        const m = /^bytes=(\d*)-(\d*)$/.exec(String(range).trim());
+        if (m) {
+          let start = m[1] !== '' ? parseInt(m[1], 10) : 0;
+          let end = m[2] !== '' ? parseInt(m[2], 10) : total - 1;
+          if (Number.isNaN(start) || start < 0) start = 0;
+          if (Number.isNaN(end) || end >= total) end = total - 1;
+          if (start > end || start >= total) {
+            res.writeHead(416, { 'Content-Range': `bytes */${total}` }); res.end(); return;
+          }
+          res.writeHead(206, {
+            'Content-Type': mime, 'Accept-Ranges': 'bytes',
+            'Content-Range': `bytes ${start}-${end}/${total}`,
+            'Content-Length': end - start + 1,
+            'Cache-Control': cacheHdr,
+          });
+          fs.createReadStream(up, { start, end }).pipe(res); return;
+        }
+      }
+      res.writeHead(200, {
+        'Content-Type': mime, 'Accept-Ranges': 'bytes', 'Content-Length': total,
+        'Cache-Control': cacheHdr,
+      });
       fs.createReadStream(up).pipe(res); return;
     }
   }
@@ -990,11 +1031,15 @@ async function requestHandler(req, res) {
         return sendJson(res, 200, { ok: true });
       }
 
-      // ---- 平台媒体库（上传 mp4 / 音频，站内播放）----
+      // ---- 平台媒体库（上传 mp4 / 音频，站内播放；分页，默认每页 12 条，最新在前）----
       if (p === '/api/media' && method === 'GET') {
-        const list = media.slice().sort((a, b) => b.createdAt - a.createdAt)
+        const q = url.parse(req.url, true).query;
+        const limit = Math.min(Math.max(parseInt(q.limit, 10) || 12, 1), 50);
+        const offset = Math.max(parseInt(q.offset, 10) || 0, 0);
+        const sorted = media.slice().sort((a, b) => b.createdAt - a.createdAt)
           .map((m) => ({ id: m.id, name: m.name, type: m.type, ext: m.ext, size: m.size, path: m.path, uploadedBy: m.uploadedBy, createdAt: m.createdAt }));
-        return sendJson(res, 200, { media: list });
+        const page = sorted.slice(offset, offset + limit);
+        return sendJson(res, 200, { media: page, total: sorted.length, limit, offset, hasMore: offset + page.length < sorted.length });
       }
       if (p === '/api/media' && method === 'POST') {
         if (!rateLimit('media:' + clientIp(req), 30, 60000)) return sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
@@ -1009,7 +1054,7 @@ async function requestHandler(req, res) {
         else { mime = type || 'application/octet-stream'; try { buf = Buffer.from(String(dataUrl), 'base64'); } catch { return sendJson(res, 400, { error: '文件数据无法解析' }); } }
         if (!/^(video|audio)\//.test(mime)) return sendJson(res, 400, { error: '仅支持视频/音频文件（mp4/mp3 等）' });
         if (!buf || buf.length < 8) return sendJson(res, 400, { error: '文件内容为空或已损坏' });
-        if (buf.length > 300 * 1024 * 1024) return sendJson(res, 400, { error: '媒体文件过大（上限 300MB）' });
+        if (buf.length > 30 * 1024 * 1024) return sendJson(res, 400, { error: '媒体文件过大（上限 30MB）' });
         const ext = (mime.split('/')[1] || 'bin').replace(/[^a-z0-9]/g, '');
         const fname = `media-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
         fs.writeFileSync(path.join(UPLOADS_DIR, fname), buf);

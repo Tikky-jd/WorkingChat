@@ -310,10 +310,13 @@ function readBody(req) {
 }
 
 // 保存 dataURL 图片，返回访问路径 /uploads/xxx
+// 仅接受浏览器可显示的格式（jpg/png/gif/webp），HEIC 等会保存成功但 <img> 无法显示 → 直接拒绝并提示
+const IMAGE_EXTS = { jpg: 1, jpeg: 1, png: 1, gif: 1, webp: 1 };
 function saveDataUrl(dataUrl, prefix) {
   const mm = dataUrl.match(/^data:(image\/(\w+));base64,(.+)$/);
   if (!mm) throw new Error('仅支持图片');
-  const ext = mm[2] === 'jpeg' ? 'jpg' : mm[2];
+  const ext = (mm[2] === 'jpeg' ? 'jpg' : mm[2]).toLowerCase();
+  if (!IMAGE_EXTS[ext]) throw new Error('仅支持 JPG / PNG / GIF / WebP 格式的图片（手机 HEIC 图请先转换为 JPG 再上传）');
   const buf = Buffer.from(mm[3], 'base64');
   if (buf.length > 10 * 1024 * 1024) throw new Error('图片超过 10MB 限制');
   const fname = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;

@@ -1020,7 +1020,10 @@ function renderProfileEdit() {
   };
   $('#meAvatarFile').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
-    if (!/^image\//.test(f.type)) { alert('仅支持图片文件'); e.target.value = ''; return; }
+    // 兼容 type 为空的情况（按扩展名兜底）；HEIC/AVIF 浏览器无法显示 → 明确提示
+    if (/^image\/(heic|heif|avif)$/i.test(f.type) || /\.(heic|heif|avif)$/i.test(f.name || '')) { alert('不支持 HEIC/AVIF 格式，请将图片转换为 JPG 或 PNG 后上传'); e.target.value = ''; return; }
+    const isImg = /^image\/(jpe?g|png|gif|webp)$/i.test(f.type) || (!f.type && /\.(jpe?g|png|gif|webp)$/i.test(f.name || ''));
+    if (!isImg) { alert('仅支持 JPG / PNG / GIF / WebP 图片'); e.target.value = ''; return; }
     if (f.size > 10 * 1024 * 1024) { alert('图片过大（上限 10MB）'); e.target.value = ''; return; }
     const rd = new FileReader();
     rd.onload = async () => {

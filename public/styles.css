@@ -90,8 +90,8 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .mock-room.active { background: var(--primary); color: #fff; }
 .mock-chat { flex: 1; padding: 16px 14px; display: flex; flex-direction: column; gap: 12px; background: var(--bg); }
 .mock-row { display: flex; } .mock-row.me { justify-content: flex-end; }
-.mock-bubble { max-width: 80%; font-size: 12.5px; line-height: 1.5; padding: 9px 12px; border-radius: 12px; background: var(--bubble-other); color: var(--bubble-other-text); }
-.mock-row.me .mock-bubble { background: var(--bubble-me); color: var(--bubble-me-text); border-bottom-right-radius: 4px; }
+.mock-bubble { max-width: 80%; font-size: 12.5px; line-height: 1.5; color: #fff; padding: 12px 16px; border: 0; border-radius: 0; background: none; border-image-source: url(/images/bubbles/reply.png); border-image-slice: 50 fill; border-image-width: 18px; border-image-repeat: stretch; }
+.mock-row.me .mock-bubble { border-image-source: url(/images/bubbles/send.png); }
 .mock-dots { display: flex; align-items: center; gap: 5px; margin-top: auto; }
 .mock-dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--online); box-shadow: 0 0 0 3px color-mix(in srgb, var(--online) 25%, transparent); }
 .mock-dots b { font-size: 12px; color: var(--online); margin-left: 2px; }
@@ -216,9 +216,9 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .msg-row { display: flex; }
 .msg-row.me { justify-content: flex-end; }
 .msg-row.other { justify-content: flex-start; }
-.bubble { max-width: 78%; background: var(--bubble-other); color: var(--bubble-other-text); padding: 9px 13px; border-radius: 14px; box-shadow: var(--shadow); }
-.msg-row.me .bubble { background: var(--bubble-me); color: var(--bubble-me-text); border-bottom-right-radius: 4px; }
-.msg-row.other .bubble { border-bottom-left-radius: 4px; }
+.bubble { max-width: 78%; color: #fff; padding: 12px 16px; border: 0; border-radius: 0; background: none; box-shadow: none; border-image-source: url(/images/bubbles/reply.png); border-image-slice: 50 fill; border-image-width: 20px; border-image-repeat: stretch; }
+.msg-row.me .bubble { border-image-source: url(/images/bubbles/send.png); }
+.msg-row.other .bubble { border-image-source: url(/images/bubbles/reply.png); }
 .meta { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
 .msg-del { margin-left: auto; width: 18px; height: 18px; border: none; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; border-radius: 50%; opacity: 0; align-self: center; }
 .bubble:hover .msg-del { opacity: 1; }
@@ -227,6 +227,7 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .time { font-size: 11px; opacity: .6; }
 .text { font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .msg-img { max-width: 300px; max-height: 320px; border-radius: 10px; cursor: zoom-in; display: block; margin-top: 2px; }
+.media-fail { padding: 18px; text-align: center; color: var(--muted); font-size: 13px; background: var(--panel2); border-radius: 10px; }
 
 /* 输入栏 */
 .composer { padding: 10px 14px 12px; border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0; }

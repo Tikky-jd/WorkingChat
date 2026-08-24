@@ -273,7 +273,7 @@ function buildMsgEl(m, animate) {
   row.className = 'msg-row ' + (m.user === me ? 'me' : 'other');
   if (animate) row.classList.add('msg-new');
   let inner = '';
-  if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" data-act="openimg" data-src="${BASE + m.image}" />`;
+  if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" data-act="openimg" data-src="${BASE + m.image}" onerror="this.alt='图片加载失败';this.style.opacity=0.4" />`;
   if (m.text) inner += `<div class="text">${escapeHtml(m.text)}</div>`;
   const own = m.user === me;
   const delBtn = (myRole === 'admin' || own) && !m.recalled ? `<button class="msg-del" title="删除此消息" data-act="delmsg" data-id="${m.id}">✕</button>` : '';
@@ -803,7 +803,7 @@ function renderRank(list) {
     if (prevRankIdx[m.email] !== undefined && i < prevRankIdx[m.email]) row.classList.add('rank-up');
     const mins = Math.floor(m.onlineSec / 60000); // onlineSec 单位是毫秒 → 转分钟
     const role = m.role === 'admin' ? '<span class="member-role">管理员</span>' : '';
-    const avatarHtml = m.avatar ? `<span class="member-ava ${m.avatarFrame === 'gold' ? 'frame-gold' : ''}"><img src="${BASE + m.avatar}" alt="" /></span>` : '';
+    const avatarHtml = m.avatar ? `<span class="member-ava ${m.avatarFrame === 'gold' ? 'frame-gold' : ''}"><img src="${BASE + m.avatar}" alt="" onerror="this.closest('.member-ava')&&(this.closest('.member-ava').innerHTML='')" /></span>` : '';
     const title2Html = m.title2 ? `<span class="member-title2">${escapeHtml(m.title2)}</span>` : '';
     const sloganHtml = m.slogan ? `<span class="member-slogan">「${escapeHtml(m.slogan)}」</span>` : '';
     row.innerHTML =
@@ -938,7 +938,7 @@ function renderProfile() {
       <h3 class="me-card-t">👤 个人资料 <span class="me-hint">（只读，点击「编辑资料」可修改）</span></h3>
       <div class="me-avatar-row">
         <div class="me-avatar ${d.avatarFrame === 'gold' ? 'frame-gold' : ''}">
-          ${p.avatar ? `<img src="${BASE + p.avatar}" alt="头像" />` : `<span class="me-avatar-letter">${escapeHtml((d.nickname || '?').slice(0, 1))}</span>`}
+          ${p.avatar ? `<img src="${BASE + p.avatar}" alt="头像" onerror="this.outerHTML='<span class=&quot;me-avatar-letter&quot;>${(escapeHtml((d.nickname||'?').slice(0,1)))}</span>'" />` : `<span class="me-avatar-letter">${escapeHtml((d.nickname || '?').slice(0, 1))}</span>`}
         </div>
         <div class="me-avatar-info">
           <div class="me-nick">${escapeHtml(d.nickname)}${d.title2 ? ` <span class="me-title2">${escapeHtml(d.title2)}</span>` : ''}</div>
@@ -967,7 +967,7 @@ function renderProfileEdit() {
       <h3 class="me-card-t">👤 编辑个人资料</h3>
       <div class="me-avatar-row">
         <div class="me-avatar ${d.avatarFrame === 'gold' ? 'frame-gold' : ''}">
-          ${p.avatar ? `<img src="${BASE + p.avatar}" alt="头像" />` : `<span class="me-avatar-letter">${escapeHtml((d.nickname || '?').slice(0, 1))}</span>`}
+          ${p.avatar ? `<img src="${BASE + p.avatar}" alt="头像" onerror="this.outerHTML='<span class=&quot;me-avatar-letter&quot;>${(escapeHtml((d.nickname||'?').slice(0,1)))}</span>'" />` : `<span class="me-avatar-letter">${escapeHtml((d.nickname || '?').slice(0, 1))}</span>`}
         </div>
         <div class="me-avatar-info">
           <div class="me-nick">${escapeHtml(d.nickname)}${d.title2 ? ` <span class="me-title2">${escapeHtml(d.title2)}</span>` : ''}</div>
@@ -1351,8 +1351,8 @@ function renderMedia() {
   box.innerHTML = mediaList.map((m) => {
     const isVideo = (m.type || '').startsWith('video/');
     const player = isVideo
-      ? `<video src="${BASE + m.path}" controls preload="metadata"></video>`
-      : `<audio src="${BASE + m.path}" controls preload="metadata"></audio>`;
+      ? `<video src="${BASE + m.path}" controls preload="metadata" onerror="this.outerHTML='<div class=&quot;media-fail&quot;>视频加载失败</div>'"></video>`
+      : `<audio src="${BASE + m.path}" controls preload="metadata" onerror="this.outerHTML='<div class=&quot;media-fail&quot;>音频加载失败</div>'"></audio>`;
     const canDel = myRole === 'admin' || m.uploadedBy === me;
     return `<div class="media-card" data-id="${m.id}">
       <div class="media-container">${player}</div>

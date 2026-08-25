@@ -211,11 +211,11 @@ function mutedRemain(email) { const t = mutedUntil.get(email); if (t && t > Date
 // 迷魂符：email -> { text, by }（目标下一条消息内容被替换）
 const voodooMsgs = new Map();
 
-// ===== 灵石体系：极品(jp) > 上品(sp) > 中品(zp) > 下品(xp)，低→高 1:100 兑换 =====
+// ===== 灵石体系：极品(jp) > 上品(sp) > 中品(zp) > 下品(xp)，逐级兑换：下→中100 / 中→上100 / 上→极10 =====
 const SPIRIT_ORDER = ['xp', 'zp', 'sp', 'jp']; // 从低到高
 const SPIRIT_NAMES = { jp: '极品灵石', sp: '上品灵石', zp: '中品灵石', xp: '下品灵石' };
 const SPIRIT_ICONS = { jp: '💎', sp: '🔮', zp: '🪨', xp: '⚪' };
-const SPIRIT_CONVERT_RATIO = 100; // 100 低阶 = 1 高阶
+const SPIRIT_CONVERT = { xp: 100, zp: 100, sp: 10 }; // 升一档所需低阶数：下品→中品100 / 中品→上品100 / 上品→极品10
 function newSpirit() { return { jp: 0, sp: 0, zp: 0, xp: 0 }; }
 
 // 签到：每月 +5 活跃积分 +10 下品灵石
@@ -726,7 +726,7 @@ async function requestHandler(req, res) {
         return sendJson(res, 200, { ok: true, spirit: u.spirit, bonus: todayBonus(u), reward: NEWBIE_REWARD });
       }
 
-      // ---- 个人中心：灵石兑换（100 低阶 = 1 高阶，仅相邻升阶）----
+      // ---- 个人中心：灵石兑换（下→中100 / 中→上100 / 上→极10，仅相邻升阶）----
       if (p === '/api/me/spirit/convert' && method === 'POST') {
         const me2 = currentUser(req);
         if (!me2) return sendJson(res, 401, { error: '未登录' });
@@ -736,7 +736,7 @@ async function requestHandler(req, res) {
         const fi = SPIRIT_ORDER.indexOf(from), ti = SPIRIT_ORDER.indexOf(to);
         if (fi < 0 || ti < 0) return sendJson(res, 400, { error: '灵石类型无效' });
         if (ti !== fi + 1) return sendJson(res, 400, { error: '只能逐级向上兑换（下品→中品→上品→极品）' });
-        const need = SPIRIT_CONVERT_RATIO;
+        const need = SPIRIT_CONVERT[from];
         if ((u.spirit[from] || 0) < need) return sendJson(res, 400, { error: `灵石不足：需要 ${need} 枚${SPIRIT_NAMES[from]}` });
         u.spirit[from] -= need;
         u.spirit[to] = (u.spirit[to] || 0) + 1;

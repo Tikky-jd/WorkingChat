@@ -1200,7 +1200,7 @@ function renderShop() {
   $('#meShop').innerHTML = `
     <div class="me-card">
       <h3 class="me-card-t">💠 我的灵石</h3>
-      <p class="me-hint">稀有度：💎极品 ＞ 🔮上品 ＞ 🪨中品 ＞ ⚪下品 · 兑换比例 1:100（低→高）</p>
+      <p class="me-hint">稀有度：💎极品 ＞ 🔮上品 ＞ 🪨中品 ＞ ⚪下品 · 逐级兑换：下→中 100 / 中→上 100 / 上→极 10</p>
       <div class="spirit-row">
         ${SPIRIT_ORDER.slice().reverse().map((k) => `
           <div class="spirit-item ${k === 'jp' ? 'rare' : ''}">
@@ -1212,7 +1212,7 @@ function renderShop() {
       <div class="convert-row">
         <button class="btn-ghost convert-btn" data-from="xp" data-to="zp">兑换 100 下品 → 1 中品</button>
         <button class="btn-ghost convert-btn" data-from="zp" data-to="sp">兑换 100 中品 → 1 上品</button>
-        <button class="btn-ghost convert-btn" data-from="sp" data-to="jp">兑换 100 上品 → 1 极品</button>
+        <button class="btn-ghost convert-btn" data-from="sp" data-to="jp">兑换 10 上品 → 1 极品</button>
       </div>
     </div>
       <div class="me-card">
@@ -1337,7 +1337,7 @@ async function convertSpirit(from, to) {
   try {
     const r = await api('POST', '/api/me/spirit/convert', { from, to });
     meData.spirit = r.spirit;
-    flash(`兑换成功：${SPIRIT_NAMES[from]} -100 → ${SPIRIT_NAMES[to]} +1`);
+    flash('兑换成功：' + SPIRIT_NAMES[from] + ' → ' + SPIRIT_NAMES[to] + ' +1');
     renderShop();
   } catch (e) { alert(e.message); }
 }

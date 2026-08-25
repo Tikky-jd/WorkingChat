@@ -216,9 +216,61 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .msg-row { display: flex; }
 .msg-row.me { justify-content: flex-end; }
 .msg-row.other { justify-content: flex-start; }
-.bubble { max-width: 78%; color: #fff; padding: 12px 16px; border: 0; border-radius: 0; background: none; box-shadow: none; border-image-source: url(/images/bubbles/reply.png); border-image-slice: 50 fill; border-image-width: 20px; border-image-repeat: stretch; }
+/* 气泡：九宫格 border-image；slice 与 border-width 1:1，上下左右固定像素不拉伸 */
+.bubble {
+  max-width: 78%;
+  color: #fff;
+  padding: 10px 14px;
+  border: solid transparent;
+  border-width: 34px;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  border-image-source: url(/images/bubbles/reply.png);
+  border-image-slice: 34 fill;
+  border-image-width: 34px;
+  border-image-repeat: stretch;
+}
 .msg-row.me .bubble { border-image-source: url(/images/bubbles/send.png); }
 .msg-row.other .bubble { border-image-source: url(/images/bubbles/reply.png); }
+
+/* 商城样式：清新绿边气泡（浅底配深色字） */
+.bubble-style-green.bubble { border-image-source: url(/images/bubbles/green-reply.png); color: #2c3e50; }
+.msg-row.me .bubble-style-green.bubble { border-image-source: url(/images/bubbles/green-send.png); }
+.msg-row.other .bubble-style-green.bubble { border-image-source: url(/images/bubbles/green-reply.png); }
+.bubble-style-green .who, .bubble-style-green .time, .bubble-style-green .msg-edited { color: #546e7a; }
+.bubble-style-green .msg-del { color: #78909c; }
+
+/* 商城样式：萌猫耳气泡（浅底配深棕字）；按图片实际装饰尺寸设四边 slice */
+.bubble-style-cat.bubble {
+  border-width: 94px 48px 73px 58px;
+  border-image-source: url(/images/bubbles/cat-reply.png);
+  border-image-slice: 94 48 73 58 fill;
+  border-image-width: 94px 48px 73px 58px;
+  color: #5a3e1f;
+}
+.msg-row.me .bubble-style-cat.bubble { border-image-source: url(/images/bubbles/cat-send.png); }
+.msg-row.other .bubble-style-cat.bubble { border-image-source: url(/images/bubbles/cat-reply.png); }
+.bubble-style-cat .who, .bubble-style-cat .time, .bubble-style-cat .msg-edited { color: #7d5d3c; }
+.bubble-style-cat .msg-del { color: #9e8570; }
+
+/* 商城样式：暖金气泡（填充暖黄，深棕字）；图片已裁剪到可见内容，slice 按实际边角设定，reply/send 怪兽脸分别在左下/右下角 */
+.bubble-style-v4.bubble {
+  border-width: 42px 12px 15px 48px;
+  border-image-source: url(/images/bubbles/v4-reply.png);
+  border-image-slice: 42 12 15 48 fill;
+  border-image-width: 42px 12px 15px 48px;
+  color: #4a3500;
+}
+.msg-row.me .bubble-style-v4.bubble {
+  border-image-source: url(/images/bubbles/v4-send.png);
+  border-image-slice: 42 48 15 12 fill;
+  border-image-width: 42px 48px 15px 12px;
+}
+.msg-row.other .bubble-style-v4.bubble { border-image-source: url(/images/bubbles/v4-reply.png); }
+.bubble-style-v4 .who, .bubble-style-v4 .time, .bubble-style-v4 .msg-edited { color: #7a5e00; }
+.bubble-style-v4 .msg-del { color: #a98b2e; }
+
 .meta { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
 .msg-del { margin-left: auto; width: 18px; height: 18px; border: none; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; border-radius: 50%; opacity: 0; align-self: center; }
 .bubble:hover .msg-del { opacity: 1; }
@@ -475,6 +527,42 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .msg-recalled { font-size: 12px; color: var(--muted); background: #f0f2f5; border-radius: 8px; padding: 4px 12px; margin: 6px auto; text-align: center; }
 .room-unread { position: absolute; top: 12px; right: 30px; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; flex-shrink: 0; }
 
+/* ---------- 藏踪符 / 匿名消息 / 炎爆符 ---------- */
+.anon-indicator { font-size: 12px; color: #8b5e00; background: #fff7e0; border: 1px solid #ffe08a; border-radius: 8px; padding: 5px 10px; margin-bottom: 8px; }
+.msg-row.anonymous .bubble { background: #f3f4f6; }
+.msg-row.anonymous .who { color: #6b7280; }
+.msg-row.burned-row { justify-content: center; }
+.msg-burned { font-size: 12px; color: #b91c1c; background: #fef2f2; border: 1px dashed #fca5a5; border-radius: 8px; padding: 6px 12px; margin: 6px auto; text-align: center; }
+.ctx-item.ctx-danger { color: #b91c1c; }
+.ctx-item.ctx-danger:hover { background: #fef2f2; }
+.shop-heart-bar { margin: 4px 0 10px; }
+#heartOpenBtn { width: 100%; }
+
+/* 追灵符弹窗 */
+.trace-body { text-align: center; }
+.trace-name { font-size: 20px; font-weight: 700; margin: 8px 0 2px; }
+.trace-sub { color: #d4a017; margin: 0 0 4px; font-weight: 600; }
+.trace-email { color: var(--muted); font-size: 12px; word-break: break-all; }
+
+/* 真心换真心 */
+.heart-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; background: var(--panel-2); }
+.heart-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 10px; }
+.heart-pair { font-weight: 600; }
+.heart-status { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #4338ca; white-space: nowrap; }
+.heart-status-pending { background: #fef3c7; color: #b45309; }
+.heart-status-active { background: #dcfce7; color: #15803d; }
+.heart-status-exchanged { background: #e0f2fe; color: #0369a1; }
+.heart-status-rejected { background: #f3f4f6; color: #6b7280; }
+.heart-actions { display: flex; gap: 10px; margin-top: 6px; }
+.heart-actions .btn-primary, .heart-actions .btn-ghost { width: auto; }
+.heart-tip { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.heart-content { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.heart-content-other { background: #e0f2fe; border-radius: 10px; padding: 10px; }
+.heart-content-me { background: #f1f5f9; border-radius: 10px; padding: 10px; }
+.heart-content b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.heart-file { display: inline-block; margin-top: 4px; color: var(--primary); text-decoration: none; }
+.heart-submit-tools { display: flex; gap: 8px; margin: 8px 0; }
+
 /* ---------- 今日活跃：称号配色（高→低） ---------- */
 .rank-title { font-weight: 700; padding: 1px 7px; border-radius: 999px; font-size: 12px; margin-right: 4px; }
 .rank-title.t-真神 { color: #fff; background: linear-gradient(135deg, #ff512f, #dd2476); }
@@ -711,6 +799,27 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .shop-buy { padding: 7px 16px; font-size: 13px; }
 #shopBuyTarget { margin-bottom: 10px; }
 #shopBuyText { margin-top: 4px; }
+
+/* 商城分类标签 */
+.shop-tabs { display: flex; gap: 8px; margin: -4px 0 14px; border-bottom: 1px solid var(--border); }
+.shop-tab { padding: 8px 14px; font-size: 13.5px; font-weight: 500; color: var(--muted); background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; }
+.shop-tab.active { color: var(--accent, #2d6cff); border-bottom-color: var(--accent, #2d6cff); }
+.shop-tab:hover { color: var(--text); }
+
+/* 样式商品列表 */
+.style-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+.style-item { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; text-align: center; }
+.style-preview { height: 70px; display: flex; align-items: center; justify-content: center; }
+.style-preview-bubble { max-width: 100%; max-height: 64px; object-fit: contain; }
+.style-preview-frame { width: 44px; height: 44px; border-radius: 50%; background: #e8e8e8; border: 3px solid #d4a017; box-shadow: 0 0 12px rgba(212,160,23,.45); }
+.style-preview-placeholder { font-size: 36px; }
+.style-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.style-side { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.shop-equip { padding: 7px 16px; font-size: 13px; }
+
+@media (max-width: 640px) {
+  .style-list { grid-template-columns: repeat(2, 1fr); }
+}
 
 /* 通用禁用态（领取后按钮置灰） */
 button:disabled { opacity: .5; cursor: not-allowed; }

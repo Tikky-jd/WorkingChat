@@ -63,6 +63,7 @@ function jf(name) { return path.join(DATA_DIR, name); }
 let users = readJson(jf('users.json'), []);
 let rooms = readJson(jf('rooms.json'), []);
 let messages = readJson(jf('messages.json'), []);
+let heartSessions = readJson(jf('hearts.json'), []); // 真心符会话：{id,initiator,target,status,initContent,targContent,initSubmitted,targSubmitted,createdAt}
 let invites = readJson(jf('invites.json'), []);
 let theme = readJson(jf('theme.json'), { bgImage: null, colorTheme: 'blue' });
 let sessions = readJson(jf('sessions.json'), {}); // token -> { email, exp }
@@ -80,6 +81,41 @@ for (const k in sessions) if (sessions[k] && sessions[k].exp && sessions[k].exp 
 function saveUsers() { writeJson(jf('users.json'), users); }
 function saveRooms() { writeJson(jf('rooms.json'), rooms); }
 function saveMessages() { writeJson(jf('messages.json'), messages); }
+const HEART_KEEP = 5;
+function recentHeartSessionsFor(user) {
+  return heartSessions
+    .filter((s) => s.initiator === user || s.target === user)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, HEART_KEEP);
+}
+// 仅当某会话对【双方】都已超出各自最新 HEART_KEEP 条时才删除（避免单方仍想查看的历史被误清）
+function pruneHearts() {
+  const keep = new Set();
+  const users = new Set();
+  for (const s of heartSessions) { users.add(s.initiator); users.add(s.target); }
+  for (const u of users) for (const s of recentHeartSessionsFor(u)) keep.add(s.id);
+  heartSessions = heartSessions.filter((s) => keep.has(s.id));
+}
+function saveHearts() { pruneHearts(); writeJson(jf('hearts.json'), heartSessions); }
+// 真心符会话对外视图：交换前不泄露对方内容，交换后只把「对方内容」给当前用户
+function publicHeart(s, me) {
+  const isInit = s.initiator === me;
+  const view = {
+    id: s.id, initiator: s.initiator, initiatorNick: nickOf(s.initiator),
+    target: s.target, targetNick: nickOf(s.target),
+    status: s.status, myRole: isInit ? 'initiator' : 'target', createdAt: s.createdAt,
+  };
+  if (s.status === 'exchanged' && !s.cleared) {
+    view.otherContent = isInit ? s.targContent : s.initContent;
+    view.myContent = isInit ? s.initContent : s.targContent;
+    view.mySubmitted = true; view.otherSubmitted = true;
+  } else {
+    view.mySubmitted = isInit ? !!s.initSubmitted : !!s.targSubmitted;
+    view.otherSubmitted = isInit ? !!s.targSubmitted : !!s.initSubmitted;
+  }
+  view.cleared = !!s.cleared;
+  return view;
+}
 function saveInvites() { writeJson(jf('invites.json'), invites); }
 function saveTheme() { writeJson(jf('theme.json'), theme); }
 function saveSessions() { writeJson(jf('sessions.json'), sessions); }
@@ -162,6 +198,11 @@ function titleOfBoosted(score, boost) {
   const i = Math.max(0, titleIdx(score) - (boost || 0));
   return TITLES[i].t;
 }
+// 爆血符效果为限时（1 小时），过期后称号回落到真实境界（titleBoost 仅此窗口内有效）
+const BAOXUE_MS = 3600000; // 1 小时
+function effectiveTitleBoost(u) {
+  return (u.baoxueUntil && u.baoxueUntil > Date.now()) ? Math.max(0, u.titleBoost || 0) : 0;
+}
 function nickOf(email) { const u = users.find((x) => x.email === email); return u ? u.nickname : email; }
 
 // 噤声符：email -> 禁言截止时间戳（内存态，重启失效）
@@ -193,17 +234,28 @@ const DAILY_TASKS = [
   { id: 't5', title: '协作完成', desc: '完成一次别人布置的任务（需发布者确认）' },
 ];
 
-// 商城（灵石购买）。target 型商品购买时前端需附带目标成员邮箱 target 与可选内容（slogan/text/title2）
+// 商城（灵石购买）。商品分「道具」与「样式」两类；样式含头像框/排名框/气泡三种。
+// target 型商品购买时前端需附带目标成员邮箱 target 与可选内容（slogan/text/title2）
 const SHOP_ITEMS = [
-  { id: 'rename', name: '改名卡', icon: '🪪', desc: '解锁一次自由修改昵称的机会（不再强制「x包」）', price: 50, unit: 'xp', kind: 'self' },
-  { id: 'title', name: '个性称号', icon: '🏅', desc: '为自己定制专属称号，展示在名字旁', price: 100, unit: 'xp', kind: 'self' },
-  { id: 'frame', name: '鎏金头像框', icon: '🖼️', desc: '永久解锁鎏金头像框，金光闪闪', price: 200, unit: 'xp', kind: 'self' },
-  { id: 'glow', name: '鎏金光效', icon: '✨', desc: '今日活跃榜中自己的条目获得金色流动边框光效，有效期 3 天', price: 1, unit: 'zp', kind: 'self' },
-  { id: 'mute', name: '噤声符', icon: '🤐', desc: '禁言任意一位成员 3 分钟（期间无法发送消息）', price: 1, unit: 'zp', kind: 'target' },
-  { id: 'voodoo', name: '迷魂符', icon: '🌀', desc: '让指定成员发送的下一条消息内容，变为你输入的消息', price: 80, unit: 'xp', kind: 'target' },
-  { id: 'baoxue', name: '爆血符', icon: '💥', desc: '活跃积分不变，称号直接强升下一等级（可叠加）', price: 20, unit: 'xp', kind: 'self' },
-  { id: 'nisheng', name: '拟声符', icon: '📝', desc: '修改任意一位成员的个人签名（对方下次改自己签名需 50 下品）', price: 100, unit: 'xp', kind: 'target' },
-  { id: 'xuehun', name: '血魂符', icon: '🩸', desc: '仅可对同阶或更低阶成员使用，修改其个性称号（显示在消息昵称旁）', price: 1, unit: 'jp', kind: 'target' },
+  // ---- 道具 ----
+  { id: 'rename', name: '改名卡', icon: '🪪', desc: '解锁一次自由修改昵称的机会（不再强制「x包」）', price: 50, unit: 'xp', kind: 'self', category: 'prop' },
+  { id: 'title', name: '个性称号', icon: '🏅', desc: '为自己定制专属称号，展示在名字旁', price: 100, unit: 'xp', kind: 'self', category: 'prop' },
+  { id: 'glow', name: '鎏金光效', icon: '✨', desc: '今日活跃榜中自己的条目获得金色流动边框光效，有效期 3 天', price: 1, unit: 'zp', kind: 'self', category: 'prop', repeat: true },
+  { id: 'baoxue', name: '爆血符', icon: '💥', desc: '活跃积分不变，称号强升下一等级，持续 1 小时（可叠加续期）', price: 20, unit: 'xp', kind: 'self', category: 'prop', repeat: true },
+  { id: 'mute', name: '噤声符', icon: '🤐', desc: '禁言任意一位成员 3 分钟（期间无法发送消息）', price: 1, unit: 'zp', kind: 'target', category: 'prop' },
+  { id: 'voodoo', name: '迷魂符', icon: '🌀', desc: '让指定成员发送的下一条消息内容，变为你输入的消息', price: 80, unit: 'xp', kind: 'target', category: 'prop' },
+  { id: 'nisheng', name: '拟声符', icon: '📝', desc: '修改任意一位成员的个人签名（对方下次改自己签名需 50 下品）', price: 100, unit: 'xp', kind: 'target', category: 'prop' },
+  { id: 'xuehun', name: '血魂符', icon: '🩸', desc: '仅可对同阶或更低阶成员使用，修改其个性称号（显示在消息昵称旁）', price: 1, unit: 'jp', kind: 'target', category: 'prop' },
+  // ---- 新道具：匿名 / 揭示 / 销毁 / 真心 ----
+  { id: 'anon', name: '藏踪符', icon: '🕵️', desc: '使用后下一条消息匿名发送（隐藏身份），每人每日限购 5 次', price: 30, unit: 'xp', kind: 'self', category: 'prop', repeat: true, dailyLimit: 5 },
+  { id: 'trace', name: '追灵符', icon: '🔍', desc: '选定一条匿名消息，查看其真实发送者，每人每日限购 1 次', price: 50, unit: 'xp', kind: 'self', category: 'prop', repeat: true, dailyLimit: 1 },
+  { id: 'burn', name: '炎爆符', icon: '🔥', desc: '销毁任意一条消息（对方无法撤回），每人每日限购 1 次', price: 80, unit: 'xp', kind: 'self', category: 'prop', repeat: true, dailyLimit: 1 },
+  { id: 'heart', name: '真心符', icon: '💗', desc: '指定一位成员发起真心换真心，双方确认后互换消息/图片/文件，只有双方都提交才可互收', price: 100, unit: 'xp', kind: 'target', category: 'prop', repeat: true },
+  // ---- 样式 ----
+  { id: 'frame', name: '鎏金头像框', icon: '🖼️', desc: '永久解锁鎏金头像框，金光闪闪', price: 200, unit: 'xp', kind: 'self', category: 'style', styleType: 'avatarFrame', styleId: 'gold' },
+  { id: 'bubble_green', name: '清新绿边气泡', icon: '💬', desc: '为消息换上清新绿边气泡，带俏皮小尾巴，永久使用', price: 180, unit: 'xp', kind: 'self', category: 'style', styleType: 'bubble', styleId: 'green' },
+  { id: 'bubble_cat', name: '萌猫耳气泡', icon: '🐱', desc: '为消息换上软糯猫耳气泡，萌趣可爱，永久使用', price: 240, unit: 'xp', kind: 'self', category: 'style', styleType: 'bubble', styleId: 'cat' },
+  { id: 'bubble_v4', name: '暖金气泡', icon: '🌟', desc: '为消息换上暖金流光气泡，温暖治愈，永久使用', price: 260, unit: 'xp', kind: 'self', category: 'style', styleType: 'bubble', styleId: 'v4' },
 ];
 
 function ensureUser(u) {
@@ -219,7 +271,20 @@ function ensureUser(u) {
   if (!u.avatarFrame) u.avatarFrame = '';
   if (!u.slogan) u.slogan = '';
   if (typeof u.titleBoost !== 'number') u.titleBoost = 0;
+  if (!u.baoxueUntil) u.baoxueUntil = 0;
   if (!u.glowUntil) u.glowUntil = 0;
+  // 新道具库存与每日限购计数
+  if (!u.dailyLimits) u.dailyLimits = {};
+  if (typeof u.anonCharges !== 'number') u.anonCharges = 0;
+  if (typeof u.traceCharges !== 'number') u.traceCharges = 0;
+  if (typeof u.burnCharges !== 'number') u.burnCharges = 0;
+  // 样式系统：迁移旧头像框，初始化拥有/装备表
+  if (!u.ownedStyles) u.ownedStyles = {};
+  if (!u.equippedStyles) u.equippedStyles = {};
+  if (u.avatarFrame === 'gold' && !u.ownedStyles['avatarFrame_gold']) {
+    u.ownedStyles['avatarFrame_gold'] = true;
+    u.equippedStyles.avatarFrame = 'gold';
+  }
   return u;
 }
 function ymStr(d) { const x = d || new Date(); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; }
@@ -246,8 +311,23 @@ function scoreOf(u) {
   ensureStatsDate();
   const dayStart = new Date(todayStr() + 'T00:00:00').getTime();
   const ms = messages.filter((m) => m.user === u.email && m.time >= dayStart && !m.recalled).length;
-  return Math.round((stats.onlineSec[u.email] || 0) / 60000) + ms + (u.bonus || 0);
+  return Math.round((stats.onlineSec[u.email] || 0) / 60000) + ms + todayBonus(u);
 }
+// 今日获得的任务/签到活跃积分（仅当天有效，避免跨天累加到每日活跃分）
+function todayBonus(u) {
+  const today = todayStr(), y = ymStr(), d = todayNum();
+  let b = 0;
+  if (u.tasks && u.tasks.daily) {
+    for (const t of DAILY_TASKS) if (u.tasks.daily[`${today}:${t.id}`]) b += DAILY_REWARD.bonus;
+  }
+  if (u.signin && u.signin[y] && Array.isArray(u.signin[y]) && u.signin[y].includes(d)) b += SIGNIN_REWARD.bonus;
+  return b; // 一次性专属任务奖励不计入每日活跃分
+}
+// 每日限购：u.dailyLimits['YYYY-MM-DD:itemId'] = 已购次数
+function dailyBuyKey(itemId) { return `${todayStr()}:${itemId}`; }
+function dailyBought(u, itemId) { return (u.dailyLimits && u.dailyLimits[dailyBuyKey(itemId)]) || 0; }
+function dailyLimitReached(u, itemId, limit) { return dailyBought(u, itemId) >= limit; }
+function bumpDailyBuy(u, itemId) { if (!u.dailyLimits) u.dailyLimits = {}; u.dailyLimits[dailyBuyKey(itemId)] = dailyBought(u, itemId) + 1; }
 // 领取奖励：加活跃积分 + 下品灵石
 function grantReward(u, reward) {
   u.bonus = (u.bonus || 0) + reward.bonus;
@@ -478,7 +558,7 @@ async function requestHandler(req, res) {
         const nickname = toBaoNickname(rawNick);
         if (!nickname) return sendJson(res, 400, { error: '昵称不能为空' });
         const salt = crypto.randomBytes(16).toString('hex');
-        const nu = { email, salt, hash: hashPassword(password, salt), nickname, role: 'user', invite: code, createdAt: Date.now(), spirit: newSpirit(), bonus: 0, profile: {}, signin: {}, tasks: { daily: {}, newbie: { claimed: false } }, renameCards: 0, title2: '', avatarFrame: '' };
+        const nu = { email, salt, hash: hashPassword(password, salt), nickname, role: 'user', invite: code, createdAt: Date.now(), spirit: newSpirit(), bonus: 0, profile: {}, signin: {}, tasks: { daily: {}, newbie: { claimed: false } }, renameCards: 0, title2: '', avatarFrame: '', ownedStyles: {}, equippedStyles: {} };
         users.push(nu);
         saveUsers();
         inv.used = true; inv.usedBy = email; inv.usedAt = Date.now(); saveInvites();
@@ -493,7 +573,9 @@ async function requestHandler(req, res) {
         const email = (b.email || '').trim().toLowerCase();
         const password = b.password || '';
         const u = users.find((x) => x.email === email);
-        if (!u || hashPassword(password, u.salt) !== u.hash) return sendJson(res, 401, { error: '邮箱或密码错误' });
+        // salt/hash 缺失（脏数据）时按「凭据无效」处理，避免 scryptSync(undefined) 抛出 500
+        const ok = !!u && !!u.salt && !!u.hash && hashPassword(password, u.salt) === u.hash;
+        if (!ok) return sendJson(res, 401, { error: '邮箱或密码错误' });
         const token = crypto.randomBytes(32).toString('hex');
         sessions[token] = { email: u.email, exp: Date.now() + TOKEN_TTL }; saveSessions();
         return sendJson(res, 200, { token, email: u.email, nickname: u.nickname });
@@ -516,10 +598,14 @@ async function requestHandler(req, res) {
         const dayStart = new Date(today + 'T00:00:00').getTime();
         return sendJson(res, 200, {
           email: e, nickname: u.nickname, role: u.role,
-          profile: u.profile || {}, spirit: u.spirit || newSpirit(), bonus: u.bonus || 0,
-          score: scoreOf(u), title: titleOfBoosted(scoreOf(u), u.titleBoost || 0), titleBoost: u.titleBoost || 0,
+          profile: u.profile || {}, spirit: u.spirit || newSpirit(), bonus: todayBonus(u),
+          score: scoreOf(u), title: titleOfBoosted(scoreOf(u), effectiveTitleBoost(u)), titleBoost: effectiveTitleBoost(u), baoxueUntil: u.baoxueUntil || 0,
           slogan: u.slogan || '', glow: (u.glowUntil || 0) > Date.now(), glowUntil: u.glowUntil || 0,
           renameCards: u.renameCards || 0, title2: u.title2 || '', avatarFrame: u.avatarFrame || '',
+          ownedStyles: u.ownedStyles || {}, equippedStyles: u.equippedStyles || {},
+          charges: { anon: u.anonCharges || 0, trace: u.traceCharges || 0, burn: u.burnCharges || 0 },
+          dailyLimits: u.dailyLimits || {},
+          heartSessions: recentHeartSessionsFor(e).map((s) => publicHeart(s, e)),
           createdAt: u.createdAt, newbieDone: newbieDone(u), newbieLocked: newbieLocked(u),
           newbieClaimed: !!(u.tasks && u.tasks.newbie && u.tasks.newbie.claimed),
           signinDates: signinDates(u), signedToday: signinDates(u).includes(todayNum()),
@@ -587,7 +673,7 @@ async function requestHandler(req, res) {
         u.signin[y].push(d);
         grantReward(u, SIGNIN_REWARD);
         saveUsers();
-        return sendJson(res, 200, { ok: true, dates: u.signin[y], spirit: u.spirit, bonus: u.bonus, reward: SIGNIN_REWARD });
+        return sendJson(res, 200, { ok: true, dates: u.signin[y], spirit: u.spirit, bonus: todayBonus(u), reward: SIGNIN_REWARD });
       }
 
       // ---- 个人中心：任务总览（每日任务 + 专属任务）----
@@ -624,7 +710,7 @@ async function requestHandler(req, res) {
         u.tasks.daily[key] = Date.now();
         grantReward(u, DAILY_REWARD);
         saveUsers();
-        return sendJson(res, 200, { ok: true, spirit: u.spirit, bonus: u.bonus, reward: DAILY_REWARD });
+        return sendJson(res, 200, { ok: true, spirit: u.spirit, bonus: todayBonus(u), reward: DAILY_REWARD });
       }
       // 领取专属任务奖励（新用户 30 天内）
       if (p === '/api/me/tasks/newbie/claim' && method === 'POST') {
@@ -637,7 +723,7 @@ async function requestHandler(req, res) {
         u.tasks.newbie = { claimed: true, claimedAt: Date.now() };
         grantReward(u, NEWBIE_REWARD);
         saveUsers();
-        return sendJson(res, 200, { ok: true, spirit: u.spirit, bonus: u.bonus, reward: NEWBIE_REWARD });
+        return sendJson(res, 200, { ok: true, spirit: u.spirit, bonus: todayBonus(u), reward: NEWBIE_REWARD });
       }
 
       // ---- 个人中心：灵石兑换（100 低阶 = 1 高阶，仅相邻升阶）----
@@ -663,8 +749,8 @@ async function requestHandler(req, res) {
         const me2 = currentUser(req);
         if (!me2) return sendJson(res, 401, { error: '未登录' });
         const u = ensureUser(users.find((x) => x.email === me2));
-        const owned = { rename: (u.renameCards || 0) > 0, title: !!(u.title2 && u.title2 !== ''), frame: !!(u.avatarFrame && u.avatarFrame !== ''), glow: (u.glowUntil || 0) > Date.now(), baoxue: (u.titleBoost || 0) > 0 };
-        return sendJson(res, 200, { spirit: u.spirit, items: SHOP_ITEMS, owned });
+        const owned = { rename: (u.renameCards || 0) > 0, title: !!(u.title2 && u.title2 !== ''), frame: !!(u.avatarFrame && u.avatarFrame !== ''), glow: (u.glowUntil || 0) > Date.now(), baoxue: (u.baoxueUntil || 0) > Date.now() };
+        return sendJson(res, 200, { spirit: u.spirit, items: SHOP_ITEMS, owned, baoxueUntil: u.baoxueUntil || 0, ownedStyles: u.ownedStyles || {}, equippedStyles: u.equippedStyles || {}, charges: { anon: u.anonCharges || 0, trace: u.traceCharges || 0, burn: u.burnCharges || 0 }, dailyLimits: u.dailyLimits || {} });
       }
       // 购买商品（灵石扣减）
       const buy = p.match(/^\/api\/me\/shop\/([^/]+)\/buy$/);
@@ -677,7 +763,14 @@ async function requestHandler(req, res) {
         if ((u.spirit[item.unit] || 0) < item.price) return sendJson(res, 400, { error: `灵石不足：需要 ${item.price} 枚${SPIRIT_NAMES[item.unit]}` });
         const b = JSON.parse(await readBody(req) || '{}');
         u.spirit[item.unit] -= item.price; // 扣款
+        // 样式类商品不可重复购买
+        const styleKey = item.category === 'style' && item.styleType ? `${item.styleType}_${item.styleId}` : '';
+        if (styleKey && u.ownedStyles[styleKey]) {
+          u.spirit[item.unit] += item.price;
+          return sendJson(res, 400, { error: '你已拥有该样式，无需重复购买' });
+        }
         let talismanNotify = ''; // 符类生效时的全局通知文本
+        let extra = {}; // 额外返回字段（如真心符会话）
         // 需要目标成员的校验
         const findTarget = () => {
           const tEmail = String(b.target || '').trim().toLowerCase();
@@ -693,6 +786,17 @@ async function requestHandler(req, res) {
           u.title2 = t2;
         } else if (item.id === 'frame') {
           u.avatarFrame = 'gold';
+          u.ownedStyles['avatarFrame_gold'] = true;
+          u.equippedStyles.avatarFrame = 'gold';
+        } else if (item.id === 'bubble_green') {
+          u.ownedStyles['bubble_green'] = true;
+          u.equippedStyles.bubble = 'green';
+        } else if (item.id === 'bubble_cat') {
+          u.ownedStyles['bubble_cat'] = true;
+          u.equippedStyles.bubble = 'cat';
+        } else if (item.id === 'bubble_v4') {
+          u.ownedStyles['bubble_v4'] = true;
+          u.equippedStyles.bubble = 'v4';
         } else if (item.id === 'glow') {
           // 鎏金光效：3 天金色流动边框（可叠加续期）
           const base = (u.glowUntil || 0) > Date.now() ? (u.glowUntil || 0) : Date.now();
@@ -713,8 +817,10 @@ async function requestHandler(req, res) {
           voodooMsgs.set(t.email, { text: vt, by: me2 });
           talismanNotify = `「${nickOf(me2)}」对「${nickOf(t.email)}」使用了迷魂符`;
         } else if (item.id === 'baoxue') {
-          // 爆血符：称号强升下一等级（活跃分不变）
-          u.titleBoost = (u.titleBoost || 0) + 1;
+          // 爆血符：称号强升下一等级（活跃分不变），限时 1 小时；未过期窗口内可叠加级数，过期后从 1 级重新强升
+          const active = (u.baoxueUntil || 0) > Date.now();
+          u.titleBoost = active ? (u.titleBoost || 0) + 1 : 1;
+          u.baoxueUntil = Date.now() + BAOXUE_MS;
           talismanNotify = `「${nickOf(me2)}」使用了爆血符`;
         } else if (item.id === 'nisheng') {
           // 拟声符：修改任意成员的个人签名
@@ -734,6 +840,27 @@ async function requestHandler(req, res) {
           if (!t2) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '请输入要设置的称号' }); }
           t.title2 = t2;
           talismanNotify = `「${nickOf(me2)}」对「${nickOf(t.email)}」使用了血魂符`;
+        } else if (item.id === 'anon' || item.id === 'trace' || item.id === 'burn') {
+          // 每日限购校验（藏踪符5 / 追灵符1 / 炎爆符1）
+          const limit = item.dailyLimit || 1;
+          if (dailyLimitReached(u, item.id, limit)) {
+            u.spirit[item.unit] += item.price;
+            return sendJson(res, 400, { error: `${item.name}每人每日限购 ${limit} 次，今日已用完` });
+          }
+          bumpDailyBuy(u, item.id);
+          if (item.id === 'anon') { u.anonCharges = (u.anonCharges || 0) + 1; talismanNotify = `「${nickOf(me2)}」使用了藏踪符`; }
+          else if (item.id === 'trace') { u.traceCharges = (u.traceCharges || 0) + 1; talismanNotify = `「${nickOf(me2)}」使用了追灵符`; }
+          else if (item.id === 'burn') { u.burnCharges = (u.burnCharges || 0) + 1; talismanNotify = `「${nickOf(me2)}」使用了炎爆符`; }
+        } else if (item.id === 'heart') {
+          // 真心符：购买即发起（target 型，需选择成员）
+          const t = findTarget();
+          if (!t) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '目标成员不存在' }); }
+          if (t.email === me2) { u.spirit[item.unit] += item.price; return sendJson(res, 400, { error: '不能对自己使用真心符' }); }
+          const sid = crypto.randomUUID();
+          const s = { id: sid, initiator: me2, target: t.email, status: 'pending', initContent: null, targContent: null, initSubmitted: false, targSubmitted: false, createdAt: Date.now() };
+          heartSessions.push(s); saveHearts();
+          talismanNotify = `「${nickOf(me2)}」对「${nickOf(t.email)}」发起了真心换真心`;
+          extra.heartSession = publicHeart(s, me2);
         } else {
           u.spirit[item.unit] += item.price;
           return sendJson(res, 404, { error: '商品不存在' });
@@ -746,7 +873,24 @@ async function requestHandler(req, res) {
           saveTalismanLog();
           pushAll({ type: 'talisman', text: talismanNotify });
         }
-        return sendJson(res, 200, { ok: true, spirit: u.spirit, renameCards: u.renameCards, title2: u.title2, avatarFrame: u.avatarFrame, titleBoost: u.titleBoost, glowUntil: u.glowUntil, slogan: u.slogan || '' });
+        return sendJson(res, 200, { ok: true, spirit: u.spirit, renameCards: u.renameCards, title2: u.title2, avatarFrame: u.avatarFrame, titleBoost: effectiveTitleBoost(u), baoxueUntil: u.baoxueUntil || 0, glowUntil: u.glowUntil, slogan: u.slogan || '', ownedStyles: u.ownedStyles, equippedStyles: u.equippedStyles, charges: { anon: u.anonCharges || 0, trace: u.traceCharges || 0, burn: u.burnCharges || 0 }, dailyLimits: u.dailyLimits || {}, ...extra });
+      }
+      // ---- 个人中心：样式装备切换（已拥有的样式才能装备）----
+      if (p === '/api/me/styles/equip' && method === 'POST') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const b = JSON.parse(await readBody(req) || '{}');
+        const styleType = String(b.styleType || '');
+        const styleId = String(b.styleId || '');
+        if (!['avatarFrame', 'rankFrame', 'bubble'].includes(styleType)) return sendJson(res, 400, { error: '样式类型无效' });
+        if (!styleId) return sendJson(res, 400, { error: '样式 ID 不能为空' });
+        const key = `${styleType}_${styleId}`;
+        if (!u.ownedStyles[key]) return sendJson(res, 403, { error: '你尚未拥有该样式' });
+        u.equippedStyles[styleType] = styleId;
+        if (styleType === 'avatarFrame') u.avatarFrame = styleId;
+        saveUsers();
+        return sendJson(res, 200, { ok: true, equippedStyles: u.equippedStyles, avatarFrame: u.avatarFrame });
       }
       // ---- 道具/符使用记录查询（最新在前）----
       if (p === '/api/talisman/log' && method === 'GET') {
@@ -856,12 +1000,19 @@ async function requestHandler(req, res) {
         let image = null;
         if (!vd && b.image) { try { image = saveDataUrl(b.image, 'msg'); } catch (e) { return sendJson(res, 400, { error: e.message }); } }
         if (!text && !image) return sendJson(res, 400, { error: '消息不能为空' });
-        const sender = users.find((x) => x.email === me) || {};
+        const sender = ensureUser(users.find((x) => x.email === me) || {});
+        const equipped = sender.equippedStyles || {};
+        let anon = false;
+        if ((sender.anonCharges || 0) > 0) { anon = true; sender.anonCharges -= 1; }
         const msg = {
-          id: crypto.randomUUID(), roomId, user: me, nickname: nickOf(me), title2: sender.title2 || '',
+          id: crypto.randomUUID(), roomId, user: me, nickname: anon ? '匿名用户' : nickOf(me), title2: anon ? '' : (sender.title2 || ''),
+          avatarFrame: anon ? '' : (sender.avatarFrame || ''),
+          bubbleStyle: anon ? '' : (equipped.bubble || ''),
+          anonymous: anon,
           type: image ? (text ? 'mixed' : 'image') : 'text',
           text: text || null, image, time: Date.now(),
         };
+        if (anon) saveUsers();
         messages.push(msg); saveMessages();
         pushRoomEvent(roomId, { type: 'message', roomId });
         return sendJson(res, 200, { message: msg });
@@ -893,7 +1044,95 @@ async function requestHandler(req, res) {
         pushRoomEvent(md[1], { type: 'message', roomId: md[1] });
         return sendJson(res, 200, { ok: true });
       }
-      // ---- 在线状态（全局：登录即计在线时长，跨房间/仪表盘都累计）----
+      // ---- 道具：追灵符（揭示匿名消息发送者）----
+      const mtr = p.match(/^\/api\/messages\/([^/]+)\/trace$/);
+      if (mtr && method === 'POST') {
+        const me = currentUser(req); if (!me) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me));
+        if ((u.traceCharges || 0) <= 0) return sendJson(res, 400, { error: '没有可用的追灵符（每日限购 1 次）' });
+        const msg = messages.find((x) => x.id === mtr[1]);
+        if (!msg) return sendJson(res, 404, { error: '消息不存在' });
+        if (!msg.anonymous) return sendJson(res, 400, { error: '该消息并非匿名消息' });
+        u.traceCharges -= 1; saveUsers();
+        const real = users.find((x) => x.email === msg.user);
+        return sendJson(res, 200, { ok: true, traceCharges: u.traceCharges, user: msg.user, nickname: real ? nickOf(msg.user) : (msg.nickname || '未知'), title2: real && real.title2 ? real.title2 : '' });
+      }
+      // ---- 道具：炎爆符（销毁任意消息）----
+      const mbr = p.match(/^\/api\/messages\/([^/]+)\/burn$/);
+      if (mbr && method === 'POST') {
+        const me = currentUser(req); if (!me) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me));
+        if ((u.burnCharges || 0) <= 0) return sendJson(res, 400, { error: '没有可用的炎爆符（每日限购 1 次）' });
+        const msg = messages.find((x) => x.id === mbr[1]);
+        if (!msg) return sendJson(res, 404, { error: '消息不存在' });
+        if (msg.burned) return sendJson(res, 400, { error: '该消息已被销毁' });
+        u.burnCharges -= 1;
+        const oldImg = msg.image;
+        msg.burned = true; msg.text = ''; msg.image = null; msg.recalled = false; msg.burnedBy = me; msg.burnedAt = Date.now();
+        saveUsers(); saveMessages(); removeImageIfUnused(oldImg);
+        pushRoomEvent(msg.roomId, { type: 'message', roomId: msg.roomId });
+        return sendJson(res, 200, { ok: true, burnCharges: u.burnCharges });
+      }
+      // ---- 道具：真心符（发起 / 确认 / 提交交换）----
+      if (p === '/api/heart/mine' && method === 'GET') {
+        const me = currentUser(req); if (!me) return sendJson(res, 401, { error: '未登录' });
+        const list = recentHeartSessionsFor(me).map((s) => publicHeart(s, me));
+        return sendJson(res, 200, { sessions: list });
+      }
+      const hstart = p.match(/^\/api\/heart\/start$/);
+      if (hstart && method === 'POST') {
+        const me = currentUser(req); if (!me) return sendJson(res, 401, { error: '未登录' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        const t = users.find((x) => x.email === String(b.target || '').trim().toLowerCase());
+        if (!t) return sendJson(res, 400, { error: '目标成员不存在' });
+        if (t.email === me) return sendJson(res, 400, { error: '不能对自己发起' });
+        const sid = crypto.randomUUID();
+        const s = { id: sid, initiator: me, target: t.email, status: 'pending', initContent: null, targContent: null, initSubmitted: false, targSubmitted: false, createdAt: Date.now() };
+        heartSessions.push(s); saveHearts();
+        pushAll({ type: 'heart', action: 'new', session: publicHeart(s, me) });
+        return sendJson(res, 200, { ok: true, session: publicHeart(s, me) });
+      }
+      const hact = p.match(/^\/api\/heart\/([^/]+)\/(accept|reject|submit)$/);
+      if (hact && method === 'POST') {
+        const me = currentUser(req); if (!me) return sendJson(res, 401, { error: '未登录' });
+        const s = heartSessions.find((x) => x.id === hact[1]);
+        if (!s) return sendJson(res, 404, { error: '会话不存在' });
+        if (s.initiator !== me && s.target !== me) return sendJson(res, 403, { error: '无权操作' });
+        const action = hact[2];
+        if (action === 'accept' || action === 'reject') {
+          if (me !== s.target) return sendJson(res, 403, { error: '只有对方可以确认' });
+          if (s.status !== 'pending') return sendJson(res, 400, { error: '状态已变更' });
+          s.status = action === 'accept' ? 'active' : 'rejected';
+        } else if (action === 'submit') {
+          if (s.status !== 'active') return sendJson(res, 400, { error: '对方尚未确认，无法提交' });
+          const b = JSON.parse(await readBody(req) || '{}');
+          let text = (b.text || '').trim();
+          let image = null, file = null;
+          if (b.image) { try { image = saveDataUrl(b.image, 'msg'); } catch (e) { return sendJson(res, 400, { error: e.message }); } }
+          if (b.fileDataUrl) { try { const url = saveDataUrl(b.fileDataUrl, 'file'); file = { name: b.fileName || 'file', url, type: b.fileType || '' }; } catch (e) { return sendJson(res, 400, { error: e.message }); } }
+          if (!text && !image && !file) return sendJson(res, 400, { error: '请提交内容（消息/图片/文件）' });
+          if (me === s.initiator) { s.initContent = { text: text || null, image, file }; s.initSubmitted = true; }
+          else { s.targContent = { text: text || null, image, file }; s.targSubmitted = true; }
+          if (s.initSubmitted && s.targSubmitted) s.status = 'exchanged';
+        }
+        saveHearts();
+      pushAll({ type: 'heart', action, session: publicHeart(s, me) });
+      return sendJson(res, 200, { ok: true, session: publicHeart(s, me) });
+    }
+    // ---- 道具：真心符（关闭弹窗后擦除已交换内容，阅后即焚）----
+    const hclear = p.match(/^\/api\/heart\/([^/]+)\/clear$/);
+    if (hclear && method === 'POST') {
+      const me = currentUser(req); if (!me) return sendJson(res, 401, { error: '未登录' });
+      const s = heartSessions.find((x) => x.id === hclear[1]);
+      if (!s) return sendJson(res, 404, { error: '会话不存在' });
+      if (s.initiator !== me && s.target !== me) return sendJson(res, 403, { error: '无权操作' });
+      if (s.status !== 'exchanged') return sendJson(res, 400, { error: '当前会话无可清除的交换内容' });
+      s.initContent = null; s.targContent = null; s.cleared = true;
+      saveHearts();
+      pushAll({ type: 'heart', action: 'clear', session: publicHeart(s, me) });
+      return sendJson(res, 200, { ok: true, session: publicHeart(s, me) });
+    }
+    // ---- 在线状态（全局：登录即计在线时长，跨房间/仪表盘都累计）----
       if (p === '/api/presence' && method === 'POST') {
         const b = JSON.parse(await readBody(req) || '{}');
         const now = Date.now();
@@ -968,8 +1207,8 @@ async function requestHandler(req, res) {
           const onlineSec = stats.onlineSec[u.email] || 0;
           const ms = msgs[u.email] || 0, dn = dones[u.email] || 0;
           // onlineSec 单位为毫秒：÷60000 转分钟，在线每分钟=1分（在线10分钟=10分）；每条消息=1分；另加签到/任务奖励分 bonus
-          const score = Math.round(onlineSec / 60000) + ms + (u.bonus || 0);
-          const title = titleOfBoosted(score, u.titleBoost || 0); // 爆血符可提升称号
+          const score = Math.round(onlineSec / 60000) + ms + todayBonus(u);
+          const title = titleOfBoosted(score, effectiveTitleBoost(u)); // 爆血符可提升称号（限时 1 小时）
           const st = presence.get(u.email);
           return { nickname: u.nickname, email: u.email, role: u.role, online: !!(st && now - st.ts < 15000), onlineSec, msgs: ms, done: dn, score, title, title2: u.title2 || '', slogan: u.slogan || '', glow: (u.glowUntil || 0) > now, avatarFrame: u.avatarFrame || '', avatar: (u.profile && u.profile.avatar) || '' };
         });

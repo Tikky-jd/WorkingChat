@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>协作台 · 企业团队私有协作空间</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='14' fill='%232563eb'/%3E%3Crect x='16' y='18' width='32' height='5' rx='2.5' fill='white' opacity='0.95'/%3E%3Crect x='16' y='29' width='22' height='5' rx='2.5' fill='white' opacity='0.8'/%3E%3Crect x='16' y='40' width='28' height='5' rx='2.5' fill='white' opacity='0.65'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="./styles.css?v=20260821ag" />
+  <link rel="stylesheet" href="./styles.css?v=20260825h" />
 </head>
 <body data-theme="blue">
   <div id="bgLayer"></div>
@@ -217,6 +217,7 @@
             <button id="voiceBtn" class="tool-btn" title="语音输入">🎤</button>
           </div>
           <div id="imgChip" class="img-chip hidden"></div>
+          <div id="anonIndicator" class="anon-indicator hidden"></div>
           <div class="composer-row">
             <textarea id="input" class="composer-input" placeholder="输入消息，Enter 发送 / Shift+Enter 换行" rows="1"></textarea>
             <button id="send" class="btn-primary">发送</button>
@@ -506,6 +507,51 @@
     <button id="ctxRecall" class="ctx-item">撤回消息</button>
     <button id="ctxReedit" class="ctx-item">重编辑</button>
     <button id="ctxQuote" class="ctx-item">引用消息</button>
+    <button id="ctxTrace" class="ctx-item">🔍 追灵符·查看发送者</button>
+    <button id="ctxBurn" class="ctx-item ctx-danger">🔥 炎爆符·销毁消息</button>
+  </div>
+
+  <!-- 追灵符结果弹窗 -->
+  <div id="traceModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3>🔍 追灵符·身份揭示</h3><button id="traceClose" class="btn-ghost">✕</button></div>
+      <div class="modal-body trace-body">
+        <p>这条匿名消息的真实发送者是：</p>
+        <p class="trace-name" id="traceName"></p>
+        <p class="trace-sub" id="traceTitle2"></p>
+        <p class="trace-email" id="traceEmail"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 真心换真心 面板 -->
+  <div id="heartModal" class="modal hidden">
+    <div class="modal-card wide">
+      <div class="modal-head"><h3>💗 真心换真心</h3><button id="heartModalClose" class="btn-ghost">✕</button></div>
+      <div class="modal-body"><div id="heartList"></div></div>
+    </div>
+  </div>
+
+  <!-- 真心符提交内容弹窗 -->
+  <div id="heartSubmitModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><span>💗 提交真心内容</span><button id="heartSubmitClose" class="modal-x">✕</button></div>
+      <div class="modal-body">
+        <p class="muted">只有双方都提交后，彼此才能看到对方的内容。可提交文字、图片或文件（任一即可）。</p>
+        <textarea id="heartSubmitText" class="composer-input" placeholder="写下你想交换的话…" rows="3"></textarea>
+        <div class="heart-submit-tools">
+          <button id="heartSubmitImg" class="tool-btn" title="添加图片">🖼️ 图片</button>
+          <button id="heartSubmitFile" class="tool-btn" title="添加文件">📎 文件</button>
+          <input id="heartSubmitImgInput" type="file" accept="image/*" hidden />
+          <input id="heartSubmitFileInput" type="file" hidden />
+        </div>
+        <div id="heartSubmitImgChip" class="img-chip hidden"></div>
+        <div id="heartSubmitFileChip" class="img-chip hidden"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="heartSubmitOk" class="btn-primary">提交</button>
+      </div>
+    </div>
   </div>
 
   <!-- 任务设置菜单（右键任务） -->
@@ -531,6 +577,6 @@
   </div>
 
   <script src="./config.js?v=20260821b"></script>
-  <script src="./app.js?v=20260821ag"></script>
+  <script src="./app.js?v=20260825h"></script>
 </body>
 </html>

@@ -29,6 +29,7 @@ let editingMid = null;         // 正在重编辑的消息 id（null=发新消�
 let ctxMid = null;             // 右键选中的消息 id
 let ctxRoomId = null;          // 右键选中的任务 id（任务设置菜单）
 let pollTimer = null, presenceTimer = null;
+let shopTab = 'prop';          // 商城当前标签：prop=道具 / style=样式
 
 const fmtTime = (t) => {
   const d = new Date(t), p = (n) => String(n).padStart(2, '0');
@@ -270,16 +271,25 @@ function buildMsgEl(m, animate) {
     row.innerHTML = `<div class="msg-recalled">${escapeHtml(m.nickname || '成员')} 撤回了一条消息</div>`;
     return row;
   }
-  row.className = 'msg-row ' + (m.user === me ? 'me' : 'other');
+  if (m.burned) {
+    row.className = 'msg-row burned-row';
+    row.innerHTML = `<div class="msg-burned">🔥 该消息已被炎爆符销毁，不可恢复</div>`;
+    return row;
+  }
+  row.className = 'msg-row ' + (m.user === me ? 'me' : 'other') + (m.anonymous ? ' anonymous' : '');
   if (animate) row.classList.add('msg-new');
   let inner = '';
   if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" data-act="openimg" data-src="${BASE + m.image}" onerror="this.alt='图片加载失败';this.style.opacity=0.4" />`;
   if (m.text) inner += `<div class="text">${escapeHtml(m.text)}</div>`;
   const own = m.user === me;
-  const delBtn = (myRole === 'admin' || own) && !m.recalled ? `<button class="msg-del" title="删除此消息" data-act="delmsg" data-id="${m.id}">✕</button>` : '';
+  const delBtn = (myRole === 'admin' || own) ? `<button class="msg-del" title="删除此消息" data-act="delmsg" data-id="${m.id}">✕</button>` : '';
   const editedTag = m.edited ? '<span class="msg-edited">已编辑</span>' : '';
-  const title2Tag = m.title2 ? `<span class="msg-title2">${escapeHtml(m.title2)}</span>` : '';
-  row.innerHTML = `<div class="bubble"><div class="meta"><span class="who">${escapeHtml(m.nickname)}</span>${title2Tag}<span class="time">${fmtTime(m.time)}</span>${editedTag}${delBtn}</div>${inner}</div>`;
+  const title2Tag = (!m.anonymous && m.title2) ? `<span class="msg-title2">${escapeHtml(m.title2)}</span>` : '';
+  const bubbleStyle = m.anonymous ? 'default' : (m.bubbleStyle || 'default');
+  const whoHtml = m.anonymous
+    ? `<span class="who">🕵️ ${escapeHtml(m.nickname)}</span>`
+    : `<span class="who">${escapeHtml(m.nickname)}</span>${title2Tag}`;
+  row.innerHTML = `<div class="bubble bubble-style-${escapeHtml(bubbleStyle)}"><div class="meta">${whoHtml}<span class="time">${fmtTime(m.time)}</span>${editedTag}${delBtn}</div>${inner}</div>`;
   return row;
 }
 function renderMessages(list) {
@@ -358,7 +368,15 @@ async function sendMsg() {
   if (pendingImage) body.image = pendingImage;
   $('#input').value = '';
   clearPendingImage();
-  try { await api('POST', `/api/rooms/${currentRoomId}/messages`, body); await loadMessages(); }
+  try {
+    const r = await api('POST', `/api/rooms/${currentRoomId}/messages`, body);
+    await loadMessages();
+    if (r && r.message && r.message.anonymous) {
+      meData.charges = meData.charges || {};
+      meData.charges.anon = Math.max(0, (meData.charges.anon || 0) - 1);
+      renderAnonIndicator();
+    }
+  }
   catch (e) { alert(e.message); }
 }
 
@@ -403,14 +421,17 @@ $('#messages').addEventListener('contextmenu', (e) => {
   e.preventDefault();
   ctxMid = row.dataset.mid;
   const m = curMessages.find((x) => x.id === ctxMid);
-  if (!m || m.recalled) { hideMsgMenu(); return; }
+  if (!m || m.recalled || m.burned) { hideMsgMenu(); return; }
   const own = m.user === me;
+  const charges = (meData && meData.charges) || {};
   show($('#ctxRecall'), !!own || myRole === 'admin');
   show($('#ctxReedit'), !!own && !!m.text);
   show($('#ctxQuote'), true);
+  show($('#ctxTrace'), !!m.anonymous && (charges.trace || 0) > 0);
+  show($('#ctxBurn'), (charges.burn || 0) > 0);
   const menu = $('#msgMenu');
-  menu.style.left = Math.min(e.clientX, window.innerWidth - 170) + 'px';
-  menu.style.top = Math.min(e.clientY, window.innerHeight - 140) + 'px';
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 175) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 210) + 'px';
   show(menu, true);
 });
 $('#ctxRecall').onclick = async () => {
@@ -428,6 +449,28 @@ $('#ctxQuote').onclick = () => {
   hideMsgMenu();
   const m = curMessages.find((x) => x.id === ctxMid);
   if (m) { const q = `> ${m.nickname}：${m.text || '[图片]'}\n`; $('#input').value = q + $('#input').value; $('#input').focus(); }
+};
+$('#ctxTrace').onclick = async () => {
+  hideMsgMenu();
+  if (!ctxMid || !currentRoomId) return;
+  try {
+    const r = await api('POST', `/api/messages/${ctxMid}/trace`);
+    if (r.charges) meData.charges = r.charges;
+    renderShop();
+    showTraceResult(r);
+  } catch (e) { alert(e.message); }
+};
+$('#ctxBurn').onclick = async () => {
+  hideMsgMenu();
+  if (!ctxMid || !currentRoomId) return;
+  if (!confirm('确定用炎爆符销毁这条消息吗？\n对方无法撤回，且不可恢复。')) return;
+  try {
+    const r = await api('POST', `/api/messages/${ctxMid}/burn`);
+    if (r.charges) meData.charges = r.charges;
+    renderShop();
+    await loadMessages();
+    flash('🔥 消息已销毁');
+  } catch (e) { alert(e.message); }
 };
 // ---------- 任务设置菜单（右键任务：浏览器提示开/关）----------
 function hideRoomMenu() { show($('#roomMenu'), false); }
@@ -617,6 +660,15 @@ function connectSSE() {
         }
         else if (d.type === 'roomCreated') loadRooms().catch(() => {});
         else if (d.type === 'talisman') showTalismanNotice(d.text || '');
+        else if (d.type === 'heart') {
+          const s = d.session;
+          if (s) {
+            meData.heartSessions = (meData.heartSessions || []).filter((x) => x.id !== s.id).concat(s); capHeartSessions();
+            renderShop();
+            const hm = $('#heartModal');
+            if (hm && !hm.classList.contains('hidden')) renderHeartList(meData.heartSessions);
+          }
+        }
         else if (d.type === 'roomDeleted') {
           unread[d.roomId] = 0;
           if (d.roomId === currentRoomId) {
@@ -1163,31 +1215,76 @@ function renderShop() {
         <button class="btn-ghost convert-btn" data-from="sp" data-to="jp">兑换 100 上品 → 1 极品</button>
       </div>
     </div>
-    <div class="me-card">
-      <h3 class="me-card-t">🛒 灵石商城</h3>
-      <div class="shop-list">
-        ${shopItemsHtml()}
-      </div>
-    </div>`;
+      <div class="me-card">
+        <h3 class="me-card-t">🛒 灵石商城</h3>
+        <div class="shop-tabs">
+          <button class="shop-tab ${shopTab === 'prop' ? 'active' : ''}" data-tab="prop">🧰 道具</button>
+          <button class="shop-tab ${shopTab === 'style' ? 'active' : ''}" data-tab="style">🎨 样式</button>
+        </div>
+        <div class="shop-heart-bar"><button class="btn-ghost" id="heartOpenBtn">💗 真心换真心</button></div>
+        <div class="shop-list">
+          ${shopItemsHtml()}
+        </div>
+      </div>`;
   document.querySelectorAll('.convert-btn').forEach((b) => { b.onclick = () => convertSpirit(b.dataset.from, b.dataset.to); });
+  document.querySelectorAll('.shop-tab').forEach((b) => { b.onclick = () => { shopTab = b.dataset.tab; renderShop(); }; });
   document.querySelectorAll('.shop-buy').forEach((b) => { b.onclick = () => buyItem(b.dataset.id); });
+  document.querySelectorAll('.shop-equip').forEach((b) => { b.onclick = () => equipStyle(b.dataset.type, b.dataset.id); });
+  document.querySelectorAll('.shop-heart-open').forEach((b) => { b.onclick = () => openHeartPanel(); });
+  const hb = $('#heartOpenBtn'); if (hb) hb.onclick = () => openHeartPanel();
+  renderAnonIndicator();
 }
 function shopItemsHtml() {
   // 与后端 SHOP_ITEMS 保持一致；kind: self=直接购买 / target=需选成员(+输入内容)；repeat=true 表示可重复购买（买过仍显示购买按钮，可叠加）
   const items = [
-    { id: 'rename', name: '改名卡', icon: '🪪', desc: '解锁一次自由修改昵称的机会（不再强制「x包」）', price: 50, unit: 'xp', kind: 'self', repeat: true },
-    { id: 'title', name: '个性称号', icon: '🏅', desc: '为自己定制专属称号，展示在名字旁', price: 100, unit: 'xp', kind: 'self' },
-    { id: 'frame', name: '鎏金头像框', icon: '🖼️', desc: '永久解锁鎏金头像框，金光闪闪', price: 200, unit: 'xp', kind: 'self' },
-    { id: 'glow', name: '鎏金光效', icon: '✨', desc: '今日活跃榜中自己的条目获得金色流动边框光效，有效期 3 天（可续期叠加）', price: 1, unit: 'zp', kind: 'self', repeat: true },
-    { id: 'mute', name: '噤声符', icon: '🤐', desc: '禁言任意一位成员 3 分钟（期间无法发送消息）', price: 1, unit: 'zp', kind: 'target', repeat: true },
-    { id: 'voodoo', name: '迷魂符', icon: '🌀', desc: '让指定成员发送的下一条消息内容，变为你输入的消息', price: 80, unit: 'xp', kind: 'target', repeat: true },
-    { id: 'baoxue', name: '爆血符', icon: '💥', desc: '活跃积分不变，称号直接强升下一等级（可叠加）', price: 20, unit: 'xp', kind: 'self', repeat: true },
-    { id: 'nisheng', name: '拟声符', icon: '📝', desc: '修改任意一位成员的个人签名（对方改自己签名需 50 下品）', price: 100, unit: 'xp', kind: 'target', repeat: true },
-    { id: 'xuehun', name: '血魂符', icon: '🩸', desc: '仅可对同阶或更低阶成员使用，修改其个性称号（显示在消息昵称旁）', price: 1, unit: 'jp', kind: 'target', repeat: true },
-  ];
-  const owned = meData ? { rename: (meData.renameCards || 0) > 0, title: !!meData.title2, frame: meData.avatarFrame === 'gold', glow: !!meData.glow, baoxue: (meData.titleBoost || 0) > 0 } : {};
+    { id: 'rename', name: '改名卡', icon: '🪪', desc: '解锁一次自由修改昵称的机会（不再强制「x包」）', price: 50, unit: 'xp', kind: 'self', category: 'prop', repeat: true },
+    { id: 'title', name: '个性称号', icon: '🏅', desc: '为自己定制专属称号，展示在名字旁', price: 100, unit: 'xp', kind: 'self', category: 'prop' },
+    { id: 'glow', name: '鎏金光效', icon: '✨', desc: '今日活跃榜中自己的条目获得金色流动边框光效，有效期 3 天（可续期叠加）', price: 1, unit: 'zp', kind: 'self', category: 'prop', repeat: true },
+    { id: 'baoxue', name: '爆血符', icon: '💥', desc: '活跃积分不变，称号强升下一等级，持续 1 小时（可叠加续期）', price: 20, unit: 'xp', kind: 'self', category: 'prop', repeat: true },
+    { id: 'mute', name: '噤声符', icon: '🤐', desc: '禁言任意一位成员 3 分钟（期间无法发送消息）', price: 1, unit: 'zp', kind: 'target', category: 'prop', repeat: true },
+    { id: 'voodoo', name: '迷魂符', icon: '🌀', desc: '让指定成员发送的下一条消息内容，变为你输入的消息', price: 80, unit: 'xp', kind: 'target', category: 'prop', repeat: true },
+    { id: 'nisheng', name: '拟声符', icon: '📝', desc: '修改任意一位成员的个人签名（对方改自己签名需 50 下品）', price: 100, unit: 'xp', kind: 'target', category: 'prop', repeat: true },
+    { id: 'xuehun', name: '血魂符', icon: '🩸', desc: '仅可对同阶或更低阶成员使用，修改其个性称号（显示在消息昵称旁）', price: 1, unit: 'jp', kind: 'target', category: 'prop', repeat: true },
+    { id: 'anon', name: '藏踪符', icon: '🕵️', desc: '使用后下一条消息匿名发送（隐藏身份），每人每日限购 5 次', price: 30, unit: 'xp', kind: 'self', category: 'prop', repeat: true, dailyLimit: 5 },
+    { id: 'trace', name: '追灵符', icon: '🔍', desc: '选定一条匿名消息，查看其真实发送者，每人每日限购 1 次', price: 50, unit: 'xp', kind: 'self', category: 'prop', repeat: true, dailyLimit: 1 },
+    { id: 'burn', name: '炎爆符', icon: '🔥', desc: '销毁任意一条消息（对方无法撤回），每人每日限购 1 次', price: 80, unit: 'xp', kind: 'self', category: 'prop', repeat: true, dailyLimit: 1 },
+    { id: 'heart', name: '真心符', icon: '💗', desc: '指定一位成员发起真心换真心，双方确认后互换消息/图片/文件，只有双方都提交才可互收', price: 100, unit: 'xp', kind: 'target', category: 'prop', repeat: true, dailyLimit: 0 },
+    { id: 'frame', name: '鎏金头像框', icon: '🖼️', desc: '永久解锁鎏金头像框，金光闪闪', price: 200, unit: 'xp', kind: 'self', category: 'style', styleType: 'avatarFrame', styleId: 'gold' },
+    { id: 'bubble_green', name: '清新绿边气泡', icon: '💬', desc: '为消息换上清新绿边气泡，带俏皮小尾巴，永久使用', price: 180, unit: 'xp', kind: 'self', category: 'style', styleType: 'bubble', styleId: 'green' },
+    { id: 'bubble_cat', name: '萌猫耳气泡', icon: '🐱', desc: '为消息换上软糯猫耳气泡，萌趣可爱，永久使用', price: 240, unit: 'xp', kind: 'self', category: 'style', styleType: 'bubble', styleId: 'cat' },
+    { id: 'bubble_v4', name: '暖金气泡', icon: '🌟', desc: '为消息换上暖金流光气泡，温暖治愈，永久使用', price: 260, unit: 'xp', kind: 'self', category: 'style', styleType: 'bubble', styleId: 'v4' },
+  ].filter((it) => it.category === shopTab);
+
+  if (!items.length) return '<div class="empty">该分类暂无商品</div>';
+
+  if (shopTab === 'style') {
+    return `<div class="style-list">${items.map((it) => {
+      const key = `${it.styleType}_${it.styleId}`;
+      const owned = !!(meData && meData.ownedStyles && meData.ownedStyles[key]);
+      const equipped = !!(meData && meData.equippedStyles && meData.equippedStyles[it.styleType] === it.styleId);
+      let btn;
+      if (equipped) btn = '<span class="shop-owned">✅ 使用中</span>';
+      else if (owned) btn = `<button class="btn-ghost shop-equip" data-type="${escapeHtml(it.styleType)}" data-id="${escapeHtml(it.styleId)}">装备</button>`;
+      else btn = `<button class="btn-primary shop-buy" data-id="${it.id}">购买</button>`;
+      return `
+      <div class="style-item">
+        <div class="style-preview">${stylePreviewHtml(it)}</div>
+        <div class="style-info">
+          <b class="shop-name">${it.icon} ${escapeHtml(it.name)}</b>
+          <span class="shop-desc">${escapeHtml(it.desc)}</span>
+        </div>
+        <div class="style-side">
+          <span class="shop-price">${it.price} ${SPIRIT_NAMES[it.unit]}</span>
+          ${btn}
+        </div>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  // 道具分类（原行为）
+  const baoxueActive = !!(meData && meData.baoxueUntil) && meData.baoxueUntil > Date.now();
+  const owned = meData ? { rename: (meData.renameCards || 0) > 0, title: !!meData.title2, glow: !!meData.glow, baoxue: baoxueActive } : {};
   return items.map((it) => {
-    // 可重复购买（消耗型/叠加型）：始终显示购买按钮，并附现有数量提示；永久型才显示「已拥有」
     const btn = it.repeat
       ? `<button class="btn-primary shop-buy" data-id="${it.id}">购买</button>`
       : (owned[it.id]
@@ -1195,14 +1292,21 @@ function shopItemsHtml() {
         : `<button class="btn-primary shop-buy" data-id="${it.id}">购买</button>`);
     let extra = '';
     if (it.id === 'rename' && (meData.renameCards || 0) > 0) extra = `<span class="shop-count">已持 ×${meData.renameCards}</span>`;
-    else if (it.id === 'baoxue' && (meData.titleBoost || 0) > 0) extra = `<span class="shop-count">已叠加 ×${meData.titleBoost}</span>`;
-    else if (it.id === 'glow' && meData.glow) extra = '<span class="shop-count">生效中</span>';
+    else if (it.id === 'baoxue' && baoxueActive) {
+      const mins = Math.max(1, Math.ceil((meData.baoxueUntil - Date.now()) / 60000));
+      extra = `<span class="shop-count">生效中 · 剩 ${mins} 分钟</span>`;
+    } else if (it.id === 'glow' && meData.glow) extra = '<span class="shop-count">生效中</span>';
+    else if ((it.id === 'anon' || it.id === 'trace' || it.id === 'burn') && ((meData.charges || {})[it.id] || 0) > 0) extra = `<span class="shop-count">已持 ×${(meData.charges || {})[it.id]}</span>`;
+    else if (it.id === 'heart') {
+      const hs = (meData.heartSessions || []).filter((s) => s.status === 'pending' || s.status === 'active' || s.status === 'exchanged');
+      if (hs.length) extra = `<button class="btn-ghost shop-heart-open">查看 ${hs.length} 场</button>`;
+    }
     return `
     <div class="shop-item">
       <span class="shop-ico">${it.icon}</span>
       <div class="shop-info">
-        <b class="shop-name">${it.name}</b>
-        <span class="shop-desc">${it.desc}</span>
+        <b class="shop-name">${escapeHtml(it.name)}</b>
+        <span class="shop-desc">${escapeHtml(it.desc)}</span>
       </div>
       <div class="shop-side">
         <span class="shop-price">${it.price} ${SPIRIT_NAMES[it.unit]}</span>
@@ -1210,6 +1314,24 @@ function shopItemsHtml() {
       </div>
     </div>`;
   }).join('');
+}
+function stylePreviewHtml(item) {
+  if (item.styleType === 'bubble') {
+    return `<img class="style-preview-bubble" src="/images/bubbles/${escapeHtml(item.styleId)}-reply.png" alt="" onerror="this.style.display='none'"/>`;
+  }
+  if (item.styleType === 'avatarFrame') {
+    return `<span class="style-preview-frame frame-${escapeHtml(item.styleId)}"></span>`;
+  }
+  return `<span class="style-preview-placeholder">${item.icon}</span>`;
+}
+async function equipStyle(styleType, styleId) {
+  try {
+    const r = await api('POST', '/api/me/styles/equip', { styleType, styleId });
+    if (r.avatarFrame !== undefined) meData.avatarFrame = r.avatarFrame;
+    if (r.equippedStyles !== undefined) meData.equippedStyles = r.equippedStyles;
+    flash('样式装备成功！');
+    loadMe();
+  } catch (e) { alert(e.message); }
 }
 async function convertSpirit(from, to) {
   try {
@@ -1222,11 +1344,13 @@ async function convertSpirit(from, to) {
 // 购买流程：self 直接买（title 需输入称号）；target 弹窗选成员(+输入内容)
 let shopBuyCtx = null;
 async function buyItem(id) {
-  const meta = { rename: {}, title: { input: '称号', max: 12 }, frame: {}, glow: {}, baoxue: {},
+  const meta = { rename: {}, title: { input: '称号', max: 12 }, frame: {}, bubble_green: {}, bubble_cat: {}, bubble_v4: {}, glow: {}, baoxue: {},
     mute: { target: true, hint: '选择要禁言 3 分钟的成员' },
     voodoo: { target: true, input: '替换消息内容', max: 200, hint: '选择成员，其下一条消息将被替换为你输入的内容' },
     nisheng: { target: true, input: '新签名', max: 30, hint: '选择要修改签名的成员' },
-    xuehun: { target: true, input: '新个性称号', max: 12, hint: '选择同阶或更低阶的成员' } }[id];
+    xuehun: { target: true, input: '新个性称号', max: 12, hint: '选择同阶或更低阶的成员' },
+    anon: {}, trace: {}, burn: {},
+    heart: { target: true, hint: '选择要发起真心换真心的成员（对方确认后方可交换）' } }[id];
   if (!meta) return;
   if (!meta.target) {
     if (id === 'title') {
@@ -1258,10 +1382,20 @@ function afterBuy(r, id) {
   if (r.title2 !== undefined) meData.title2 = r.title2;
   if (r.avatarFrame !== undefined) meData.avatarFrame = r.avatarFrame;
   if (r.titleBoost !== undefined) meData.titleBoost = r.titleBoost;
+  if (r.baoxueUntil !== undefined) meData.baoxueUntil = r.baoxueUntil;
   if (r.glowUntil !== undefined) meData.glowUntil = r.glowUntil;
   if (r.slogan !== undefined) meData.slogan = r.slogan;
+  if (r.ownedStyles !== undefined) meData.ownedStyles = r.ownedStyles;
+  if (r.equippedStyles !== undefined) meData.equippedStyles = r.equippedStyles;
+  if (r.charges) meData.charges = r.charges;
+  if (r.dailyLimits) meData.dailyLimits = r.dailyLimits;
+  if (r.heartSession) {
+    meData.heartSessions = meData.heartSessions || [];
+    meData.heartSessions = meData.heartSessions.filter((s) => s.id !== r.heartSession.id).concat(r.heartSession); capHeartSessions();
+  }
   flash('购买成功！');
   loadMe();
+  if (r.heartSession) openHeartPanel(r.heartSession.id);
 }
 // 商城购买弹窗事件
 $('#shopBuyClose').onclick = () => show($('#shopBuyModal'), false);
@@ -1283,6 +1417,178 @@ $('#shopBuyOk').onclick = async () => {
     afterBuy(r, shopBuyCtx.id);
   } catch (e) { alert(e.message); }
 };
+
+// ---------- 真心符 / 追灵符 / 藏踪符 前端逻辑 ----------
+let heartSubmitId = null, pendingHeartImage = null, pendingHeartFile = null;
+function renderAnonIndicator() {
+  const el = $('#anonIndicator');
+  if (!el) return;
+  const n = (meData && meData.charges && meData.charges.anon) || 0;
+  if (n > 0) { el.textContent = `🕵️ 藏踪符生效中：下一条消息将匿名发送（剩 ${n} 次）`; show(el, true); }
+  else show(el, false);
+}
+function showTraceResult(r) {
+  const el = $('#traceModal');
+  if (!el) { alert(`🔍 追灵符揭示：该匿名消息由「${r.nickname}」(${r.user}) 发送`); return; }
+  $('#traceName').textContent = r.nickname || '未知';
+  $('#traceTitle2').textContent = r.title2 ? `（${r.title2}）` : '';
+  $('#traceEmail').textContent = r.user || '';
+  show(el, true);
+}
+async function openHeartPanel(focusId) {
+  show($('#heartModal'), true);
+  await loadHeartSessions(focusId);
+}
+const HEART_KEEP = 5; // 真心换真心记录只保留最新的 5 条
+function capHeartSessions() {
+  if (!meData.heartSessions || meData.heartSessions.length <= HEART_KEEP) return;
+  meData.heartSessions = [...meData.heartSessions].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, HEART_KEEP);
+}
+async function loadHeartSessions(focusId) {
+  const list = $('#heartList');
+  if (list) list.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const { sessions } = await api('GET', '/api/heart/mine');
+    meData.heartSessions = sessions; capHeartSessions();
+    renderHeartList(meData.heartSessions, focusId);
+    renderShop();
+  } catch (e) { if (list) list.innerHTML = `<div class="empty">加载失败：${escapeHtml(e.message)}</div>`; }
+}
+function heartOtherNick(s) { return s.myRole === 'initiator' ? s.targetNick : s.initiatorNick; }
+function heartStatusText(s) {
+  if (s.status === 'pending') return s.myRole === 'target' ? '对方向你发起，等待你确认' : '已发起，等待对方确认…';
+  if (s.status === 'active') return '进行中：双方都提交后互收内容';
+  if (s.status === 'exchanged') return '已完成：双方内容已互换';
+  if (s.status === 'rejected') return '已被对方拒绝';
+  return s.status;
+}
+function heartContentHtml(c) {
+  if (!c) return '<span class="muted">（空）</span>';
+  let h = '';
+  if (c.text) h += `<div class="text">${escapeHtml(c.text)}</div>`;
+  if (c.image) h += `<img class="msg-img" src="${BASE + c.image}" alt="图片"/>`;
+  if (c.file) h += `<a class="heart-file" href="${BASE + c.file.url}" target="_blank" rel="noopener">📎 ${escapeHtml(c.file.name || '文件')}</a>`;
+  return h || '<span class="muted">（空）</span>';
+}
+function heartCardHtml(s) {
+  const pair = `${escapeHtml(s.initiatorNick)} 💗 ${escapeHtml(s.targetNick)}`;
+  let body = '';
+  if (s.status === 'pending') {
+    if (s.myRole === 'target') body = `<div class="heart-actions"><button class="btn-primary heart-accept" data-id="${s.id}">接受</button><button class="btn-ghost heart-reject" data-id="${s.id}">拒绝</button></div>`;
+    else body = `<div class="heart-tip">等待「${escapeHtml(s.targetNick)}」确认…</div>`;
+  } else if (s.status === 'active') {
+    if (!s.mySubmitted) body = `<div class="heart-actions"><button class="btn-primary heart-submit-open" data-id="${s.id}">提交我的内容</button></div>`;
+    else if (!s.otherSubmitted) body = `<div class="heart-tip">你已提交，等待「${escapeHtml(heartOtherNick(s))}」提交…</div>`;
+    else body = `<div class="heart-tip">双方均已提交，内容已互换 ↓</div>`;
+  } else if (s.status === 'exchanged') {
+    if (s.cleared) body = `<div class="heart-tip">内容已清除（阅后即焚，关闭弹窗后不可再查看）。</div>`;
+    else body = `<div class="heart-content"><div class="heart-content-other"><b>对方内容</b>${heartContentHtml(s.otherContent)}</div><div class="heart-content-me"><b>我的内容</b>${heartContentHtml(s.myContent)}</div></div>`;
+  } else if (s.status === 'rejected') {
+    body = `<div class="heart-tip">对方已拒绝本次真心换真心。</div>`;
+  }
+  return `<div class="heart-card" data-sid="${s.id}"><div class="heart-card-head"><span class="heart-pair">${pair}</span><span class="heart-status heart-status-${s.status}">${heartStatusText(s)}</span></div>${body}</div>`;
+}
+function renderHeartList(sessions, focusId) {
+  const list = $('#heartList');
+  if (!list) return;
+  if (!sessions || !sessions.length) { list.innerHTML = '<div class="empty">还没有真心换真心会话。购买「真心符」并向一位成员发起吧。</div>'; return; }
+  list.innerHTML = sessions.map((s) => heartCardHtml(s)).join('');
+  list.querySelectorAll('.heart-accept').forEach((b) => b.onclick = () => heartAct(b.dataset.id, 'accept'));
+  list.querySelectorAll('.heart-reject').forEach((b) => b.onclick = () => heartAct(b.dataset.id, 'reject'));
+  list.querySelectorAll('.heart-submit-open').forEach((b) => b.onclick = () => openHeartSubmit(b.dataset.id));
+  if (focusId) { const f = list.querySelector(`[data-sid="${focusId}"]`); if (f) f.scrollIntoView({ behavior: 'smooth' }); }
+}
+async function heartAct(id, action) {
+  try {
+    const r = await api('POST', `/api/heart/${id}/${action}`);
+    if (r.session) meData.heartSessions = (meData.heartSessions || []).filter((x) => x.id !== id).concat(r.session); capHeartSessions();
+    renderHeartList(meData.heartSessions);
+    renderShop();
+  } catch (e) { alert(e.message); }
+}
+function openHeartSubmit(id) {
+  heartSubmitId = id; pendingHeartImage = null; pendingHeartFile = null;
+  $('#heartSubmitText').value = '';
+  $('#heartSubmitImgChip').innerHTML = ''; show($('#heartSubmitImgChip'), false);
+  $('#heartSubmitFileChip').innerHTML = ''; show($('#heartSubmitFileChip'), false);
+  show($('#heartSubmitModal'), true);
+}
+function renderHeartImgChip() {
+  const chip = $('#heartSubmitImgChip');
+  if (!pendingHeartImage) { show(chip, false); chip.innerHTML = ''; return; }
+  chip.innerHTML = `<img src="${pendingHeartImage}" class="chip-img"/><button class="chip-x" data-act="clearheartimg">✕</button>`;
+  show(chip, true);
+}
+function renderHeartFileChip() {
+  const chip = $('#heartSubmitFileChip');
+  if (!pendingHeartFile) { show(chip, false); chip.innerHTML = ''; return; }
+  chip.innerHTML = `📎 ${escapeHtml(pendingHeartFile.name)}<button class="chip-x" data-act="clearheartfile">✕</button>`;
+  show(chip, true);
+}
+async function submitHeart() {
+  if (!heartSubmitId) return;
+  const text = $('#heartSubmitText').value.trim();
+  if (!text && !pendingHeartImage && !pendingHeartFile) { alert('请提交内容（消息/图片/文件）'); return; }
+  const body = {};
+  if (text) body.text = text;
+  if (pendingHeartImage) body.image = pendingHeartImage;
+  if (pendingHeartFile) { body.fileDataUrl = pendingHeartFile.dataUrl; body.fileName = pendingHeartFile.name; body.fileType = pendingHeartFile.type; }
+  show($('#heartSubmitModal'), false);
+  try {
+    const r = await api('POST', `/api/heart/${heartSubmitId}/submit`, body);
+    pendingHeartImage = null; pendingHeartFile = null;
+    if (r.session) meData.heartSessions = (meData.heartSessions || []).filter((x) => x.id !== heartSubmitId).concat(r.session); capHeartSessions();
+    renderHeartList(meData.heartSessions);
+    renderShop();
+    flash('已提交，等待对方提交后即可互收');
+  } catch (e) { alert(e.message); }
+}
+// 真心符提交：图片选择
+$('#heartSubmitImg').onclick = () => $('#heartSubmitImgInput').click();
+$('#heartSubmitImgInput').onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { alert('仅支持图片文件'); e.target.value = ''; return; }
+  if (file.size > 10 * 1024 * 1024) { alert('图片不能超过 10MB'); e.target.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = () => { pendingHeartImage = reader.result; renderHeartImgChip(); };
+  reader.readAsDataURL(file); e.target.value = '';
+};
+// 真心符提交：文件选择
+$('#heartSubmitFile').onclick = () => $('#heartSubmitFileInput').click();
+$('#heartSubmitFileInput').onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { pendingHeartFile = { name: file.name, type: file.type, dataUrl: reader.result }; renderHeartFileChip(); };
+  reader.readAsDataURL(file); e.target.value = '';
+};
+$('#heartSubmitOk').onclick = submitHeart;
+$('#heartSubmitClose').onclick = () => show($('#heartSubmitModal'), false);
+$('#heartModalClose').onclick = closeHeartModal;
+// 关闭真心换真心弹窗时，擦除已交换的内容（阅后即焚）
+async function closeHeartModal() {
+  const ex = (meData.heartSessions || []).filter((s) => s.status === 'exchanged' && !s.cleared);
+  for (const s of ex) {
+    try {
+      const r = await api('POST', `/api/heart/${s.id}/clear`);
+      if (r.session) meData.heartSessions = (meData.heartSessions || []).filter((x) => x.id !== s.id).concat(r.session); capHeartSessions();
+    } catch (e) { /* 忽略：即便清失败也照常关闭弹窗 */ }
+  }
+  show($('#heartModal'), false);
+}
+// 点遮罩 / 按 Esc 关闭真心换真心弹窗，同样触发阅后即焚擦除
+$('#heartModal').addEventListener('click', (e) => { if (e.target === $('#heartModal')) closeHeartModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { const hm = $('#heartModal'); if (hm && !hm.classList.contains('hidden')) closeHeartModal(); } });
+$('#traceClose').onclick = () => show($('#traceModal'), false);
+// 全局委托：真心符图片/文件清除
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act;
+  if (act === 'clearheartimg') { pendingHeartImage = null; renderHeartImgChip(); }
+  else if (act === 'clearheartfile') { pendingHeartFile = null; renderHeartFileChip(); }
+});
 
 // 全局委托补充：每日任务领奖
 document.addEventListener('click', (e) => {

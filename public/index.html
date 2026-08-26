@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>协作台 · 企业团队私有协作空间</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='14' fill='%232563eb'/%3E%3Crect x='16' y='18' width='32' height='5' rx='2.5' fill='white' opacity='0.95'/%3E%3Crect x='16' y='29' width='22' height='5' rx='2.5' fill='white' opacity='0.8'/%3E%3Crect x='16' y='40' width='28' height='5' rx='2.5' fill='white' opacity='0.65'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="./styles.css?v=20260826e" />
+  <link rel="stylesheet" href="./styles.css?v=20260826l" />
 </head>
 <body data-theme="blue">
   <div id="bgLayer"></div>
@@ -390,21 +390,21 @@
     <header class="page-head">
       <button class="btn-ghost page-back" data-act="view" data-view="main">← 返回<span class="back-detail">工作台</span></button>
       <h2>👑 皇榜 · 任务发布</h2>
-      <button id="taskPublishBtn" class="btn-new">📋 发布任务</button>
+      <div class="page-actions">
+        <button id="myTasksBtn" class="btn-new btn-new--alt" data-act="mytasks">📁 我的任务</button>
+        <button id="taskPublishBtn" class="btn-new">📋 发布任务</button>
+      </div>
     </header>
     <div class="page-body tasks-body">
       <div class="tasks-col">
         <h3 class="tasks-h">📜 悬赏任务（皇榜）</h3>
-        <div id="taskBoard" class="task-board"><div class="empty">加载中…</div></div>
-      </div>
-      <div class="tasks-col tasks-col--side">
-        <div class="tasks-sub">
-          <h3 class="tasks-h">🙋 我接的任务（限时 <span id="timedUsed">0</span>/<span id="timedMax">3</span>）</h3>
-          <div id="taskAccepted" class="task-list"><div class="empty">还没有接取任务</div></div>
-        </div>
-        <div class="tasks-sub">
-          <h3 class="tasks-h">📌 我发布的任务</h3>
-          <div id="taskPublished" class="task-list"><div class="empty">还没有发布任务</div></div>
+        <div class="task-carousel">
+          <div class="task-stage" id="taskStage"><div class="empty">加载中…</div></div>
+          <div class="task-nav">
+            <button id="taskPrevBtn" class="btn-new task-nav-btn" data-act="taskprev">← 向左</button>
+            <button class="btn-primary task-nav-btn task-accept-btn" data-act="taskacceptnav">🙋 揭榜</button>
+            <button id="taskNextBtn" class="btn-new task-nav-btn" data-act="tasknext">向右 →</button>
+          </div>
         </div>
       </div>
     </div>
@@ -604,6 +604,8 @@
       <div class="modal-head"><h3>📋 发布任务（悬赏灵石）</h3><button id="taskPublishClose" class="btn-ghost">✕</button></div>
       <input id="taskTitle" class="input" placeholder="任务标题，如：整理本周会议纪要" maxlength="80" />
       <textarea id="taskDesc" class="composer-input task-desc" placeholder="任务说明（交付标准、要求等）" rows="3" maxlength="1000"></textarea>
+      <p class="modal-label">时间要求（可选）</p>
+      <input id="taskTimeReq" class="input" placeholder="如：3天内 / 本周五前 / 不限" maxlength="40" />
       <p class="modal-label">交付内容类型</p>
       <select id="taskDeliverType" class="input">
         <option value="doc">📄 文档</option>
@@ -656,6 +658,23 @@
     </div>
   </div>
 
+  <!-- 我的任务弹窗 -->
+  <div id="myTasksModal" class="modal hidden">
+    <div class="modal-card wide">
+      <div class="modal-head"><h3>📁 我的任务</h3><button id="myTasksClose" class="btn-ghost">✕</button></div>
+      <div class="modal-body">
+        <div class="my-tasks-sec">
+          <h4 class="my-tasks-h">🙋 接取中的任务</h4>
+          <div id="myTasksList" class="my-tasks-list"><div class="empty">还没有接取任务，去皇榜揭榜吧～</div></div>
+        </div>
+        <div class="my-tasks-sec">
+          <h4 class="my-tasks-h">📌 我发布的任务</h4>
+          <div id="myTasksPublished" class="my-tasks-list"><div class="empty">还没有发布任务</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 任务设置菜单（右键任务） -->
   <div id="roomMenu" class="ctx-menu hidden">
     <button id="roomNotifToggle" class="ctx-item">关闭浏览器提示</button>
@@ -679,6 +698,6 @@
   </div>
 
   <script src="./config.js?v=20260821b"></script>
-  <script src="./app.js?v=20260826e"></script>
+  <script src="./app.js?v=20260826l"></script>
 </body>
 </html>

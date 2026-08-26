@@ -969,20 +969,41 @@ button:not(:disabled):active { transform: scale(.96); }
 .feat-multi.active { border-color: #d4a017; background: color-mix(in srgb, #d4a017 22%, var(--panel)); }
 
 /* 任务发布页 */
-.tasks-body { display: flex; gap: 18px; align-items: flex-start; }
-.tasks-col { flex: 1; min-width: 0; }
-.tasks-col--side { flex: 0 0 360px; display: flex; flex-direction: column; gap: 16px; }
+.tasks-body { display: block; }
+.tasks-col { min-width: 0; }
 .tasks-h { font-size: 15px; margin: 0 0 10px; color: var(--text); }
-.task-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+/* 皇榜：三卡封面流（Coverflow）轮播 */
+.task-carousel { max-width: 720px; margin: 4px auto 0; }
+.task-stage { position: relative; min-height: 400px; perspective: 1200px; }
+.task-card--carousel {
+  position: absolute; top: 6px; left: 50%;
+  width: min(340px, 82%);
+  margin-left: calc(min(340px, 82%) / -2);
+  transition: transform .42s cubic-bezier(.22,.61,.36,1), opacity .42s ease;
+  transform-origin: center top;
+  max-height: 388px; overflow: auto;
+}
+.task-card--carousel .task-card-foot { display: none; }   /* 揭榜交由下方导航条统一处理 */
+.task-card--carousel.pos-center { transform: translateX(0) scale(1); opacity: 1; z-index: 3; }
+.task-card--carousel.pos-left   { transform: translateX(-80%) scale(.82); opacity: .8; z-index: 2; cursor: pointer; }
+.task-card--carousel.pos-right  { transform: translateX(80%) scale(.82); opacity: .8; z-index: 2; cursor: pointer; }
+.task-card--carousel.pos-left-hidden  { transform: translateX(-150%) scale(.7); opacity: 0; z-index: 1; }
+.task-card--carousel.pos-right-hidden { transform: translateX(150%) scale(.7); opacity: 0; z-index: 1; }
+.task-nav { display: flex; justify-content: center; align-items: center; gap: 16px; margin-top: 16px; }
+.task-nav-btn { min-width: 100px; justify-content: center; }
+.task-accept-btn { min-width: 130px; font-weight: 700; }
+.task-nav-btn:disabled { opacity: .4; cursor: not-allowed; }
+.task-nav-btn:disabled:hover { transform: none; }
 .task-list { display: flex; flex-direction: column; gap: 10px; }
 .task-card {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px;
   display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow);
+  min-width: 0;
 }
 .task-card--done { opacity: .72; }
 .task-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.task-title { font-size: 14.5px; }
-.task-reward { font-size: 13px; color: #d4a017; font-weight: 600; white-space: nowrap; }
+.task-title { font-size: 16px; font-weight: 700; margin: 2px 0 0; line-height: 1.4; }
+.task-reward { font-size: 13.5px; color: #d4a017; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
 .task-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .task-tag { font-size: 11.5px; padding: 2px 8px; border-radius: 20px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
 .task-tag.task-done { color: #2e7d32; background: #2e7d3214; border-color: #2e7d3240; }
@@ -997,6 +1018,26 @@ button:not(:disabled):active { transform: scale(.96); }
 .task-sub-file { font-size: 12.5px; color: var(--primary); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
 .task-sub-file:hover { text-decoration: underline; }
 .task-sub-img { max-width: 240px; max-height: 180px; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; }
+/* 任务卡片新布局（瀑布流 + 信息表） */
+.task-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.task-status-badge { font-size: 11.5px; padding: 3px 10px; border-radius: 20px; font-weight: 600; border: 1px solid var(--border); white-space: nowrap; flex-shrink: 0; }
+.task-status-open { color: #1565c0; background: #1565c014; border-color: #1565c040; }
+.task-status-accepted { color: #e65100; background: #e6510014; border-color: #e6510040; }
+.task-status-submitted { color: #6a1b9a; background: #6a1b9a14; border-color: #6a1b9a40; }
+/* 皇榜瀑布流列数由 app.js 按皇榜可用宽度动态计算（4 / 3 / 2 / 1 列） */
+.task-status-done { color: #2e7d32; background: #2e7d3214; border-color: #2e7d3240; }
+.task-status-canceled { color: var(--muted); background: var(--panel-2); }
+.task-card-info { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px dashed var(--border); margin-top: 2px; }
+.task-info-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12.5px; }
+.ti-label { color: var(--muted); flex: none; }
+.ti-val { color: var(--text); text-align: right; font-weight: 500; word-break: break-word; }
+/* 页头动作区：我的任务 + 发布任务（间隔 30px） */
+.page-actions { margin-left: auto; display: flex; align-items: center; gap: 30px; }
+.page-actions .btn-new { margin: 0; white-space: nowrap; }
+.btn-new--alt { border-style: solid; background: var(--panel-2); }
+/* 我的任务弹窗列表 */
+.my-tasks-list { display: flex; flex-direction: column; gap: 0; max-height: 62vh; overflow-y: auto; }
+.my-tasks-list .task-card { margin: 0 0 14px; }
 /* 个人中心限时任务 */
 .me-timed-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--border); }
 .me-timed-row b { font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1007,7 +1048,8 @@ button:not(:disabled):active { transform: scale(.96); }
 .task-reward-unit { flex: 0 0 160px; }
 .modal-hint { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 4px 0 0; }
 
-@media (max-width: 900px) {
-  .tasks-body { flex-direction: column; }
-  .tasks-col--side { flex: 1 1 auto; width: 100%; }
-}
+/* 我的任务弹窗：分两段（接取中 / 我发布的） */
+.my-tasks-sec { margin-bottom: 16px; }
+.my-tasks-sec:last-child { margin-bottom: 0; }
+.my-tasks-h { font-size: 13.5px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+.my-tasks-list { display: flex; flex-direction: column; gap: 10px; max-height: 38vh; overflow: auto; }

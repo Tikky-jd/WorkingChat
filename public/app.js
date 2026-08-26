@@ -1689,6 +1689,10 @@ document.addEventListener('click', (e) => {
   else if (act === 'taskquit') quitTask(el.dataset.id);
   else if (act === 'taskcancel') cancelTask(el.dataset.id);
   else if (act === 'gotasks') goView('tasks');
+  else if (act === 'mytasks') openMyTasks();
+  else if (act === 'taskprev') goCarousel(-1);         // ← 向左按钮 → 选中左侧卡片（上一任务，从服务端拉取上一个）
+  else if (act === 'tasknext') goCarousel(1);          // 向右 → 按钮 → 选中右侧卡片（下一任务，从服务端拉取下一个）
+  else if (act === 'taskacceptnav') { const ct = taskAtAbs(taskCenterIdx); if (ct) acceptTask(ct.id); }
 });
 
 // ---------- 媒体管理（原工作日报板块改造；分页，每页 12 条） ----------
@@ -2291,32 +2295,159 @@ function submissionHtml(t) {
 
 async function loadTasks() {
   try {
-    const [board, mine] = await Promise.all([api('GET', '/api/tasks'), api('GET', '/api/tasks/mine')]);
-    taskBoardData.open = board.tasks || [];
+    const mine = await api('GET', '/api/tasks/mine');
     taskBoardData.published = mine.published || [];
     taskBoardData.accepted = mine.accepted || [];
     const tu = $('#timedUsed'); if (tu) tu.textContent = mine.timedUsed || 0;
     const tm = $('#timedMax'); if (tm) tm.textContent = mine.timedMax || 3;
-    renderTasks();
-  } catch (e) { const b = $('#taskBoard'); if (b) b.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+    if (currentView === 'tasks') await refreshCarousel();
+  } catch (e) { const b = $('#taskStage'); if (b) b.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
 }
-function renderTasks() {
-  const board = $('#taskBoard');
-  board.innerHTML = taskBoardData.open.length
-    ? taskBoardData.open.map((t) => taskCardHtml(t, 'board')).join('')
-    : '<div class="empty">还没有悬赏任务，去发布一个吧～</div>';
-  const acc = $('#taskAccepted');
-  acc.innerHTML = taskBoardData.accepted.length
-    ? taskBoardData.accepted.map((t) => taskCardHtml(t, 'accepted')).join('')
-    : '<div class="empty">还没有接取任务</div>';
-  const pub = $('#taskPublished');
-  pub.innerHTML = taskBoardData.published.length
-    ? taskBoardData.published.map((t) => taskCardHtml(t, 'published')).join('')
-    : '<div class="empty">还没有发布任务</div>';
+// ===== 皇榜三卡封面流（服务端分页：初始只拉 3 个，左右导航各从 DB 拉取上/下一个）=====
+let taskCenterIdx = 0;            // 当前居中卡片在「全量 open 列表」中的绝对下标
+let taskTotal = 0;                // 服务端返回的可浏览任务总数
+let taskWindow = [];              // 当前已加载的窗口（最多 3 个）
+let taskWindowStart = 0;          // 当前窗口首项的绝对下标
+let taskAnimating = false;
+let taskSwipeBound = false;
+let carouselL = null, carouselC = null, carouselR = null;
+
+function renderTasks() { renderTaskBoard(); }
+
+function renderTaskBoard() {
+  const stage = $('#taskStage');
+  if (!stage) return;
+  refreshCarousel().catch(() => {});
+}
+
+// 进入皇榜 / 接取·确认等操作后调用；保留当前居中位置，从服务端重新拉取窗口
+async function refreshCarousel() {
+  const stage = $('#taskStage');
+  if (!stage) return;
+  const firstLoad = !carouselC;
+  if (firstLoad) buildCarouselDom();
+  await fetchWindow(taskCenterIdx);
+  if (firstLoad) taskCenterIdx = taskTotal >= 3 ? 1 : (taskTotal === 2 ? 1 : 0);
+  else taskCenterIdx = Math.min(Math.max(taskCenterIdx, 0), Math.max(0, taskTotal - 1));
+  renderSlotsFromWindow();
+  updateNavButtons();
+}
+
+// 从服务端分页拉取以 centerIdx 为中心、最多 3 个的窗口
+async function fetchWindow(centerIdx) {
+  const localStart = Math.max(0, centerIdx - 1);
+  const d = await api('GET', `/api/tasks?offset=${localStart}&limit=3`);
+  taskTotal = d.total || 0;
+  taskWindow = d.tasks || [];
+  taskWindowStart = localStart;
+  return d;
+}
+function taskAtAbs(absIdx) {
+  if (absIdx < taskWindowStart || absIdx >= taskWindowStart + taskWindow.length) return null;
+  return taskWindow[absIdx - taskWindowStart];
+}
+
+function buildCarouselDom() {
+  const stage = $('#taskStage'); if (!stage) return;
+  stage.innerHTML = '';
+  carouselL = makeSlot(); carouselC = makeSlot(); carouselR = makeSlot();
+  stage.appendChild(carouselL); stage.appendChild(carouselC); stage.appendChild(carouselR);
+  bindTaskSwipe();
+}
+function makeSlot() {
+  const el = document.createElement('div');
+  el.className = 'task-card task-card--carousel pos-center';
+  el.addEventListener('click', () => {
+    if (taskAnimating) return;
+    if (el === carouselL) goCarousel(-1);
+    else if (el === carouselR) goCarousel(1);
+  });
+  return el;
+}
+function setSlot(slot, task, posClass) {
+  if (!slot) return;
+  if (!task) { slot.style.visibility = 'hidden'; slot.innerHTML = ''; slot.className = 'task-card task-card--carousel ' + posClass; return; }
+  slot.style.visibility = 'visible';
+  slot.innerHTML = taskCardHtml(task, 'board');
+  slot.className = 'task-card task-card--carousel ' + posClass;
+}
+function renderSlotsFromWindow() {
+  const rel = taskCenterIdx - taskWindowStart;
+  const center = taskWindow[rel];
+  if (!center) {
+    const stage = $('#taskStage');
+    if (stage) stage.innerHTML = '<div class="empty">还没有悬赏任务，去发布一个吧～</div>';
+    carouselL = carouselC = carouselR = null;
+    return;
+  }
+  setSlot(carouselL, rel > 0 ? taskWindow[rel - 1] : null, 'pos-left');
+  setSlot(carouselC, center, 'pos-center');
+  setSlot(carouselR, rel < taskWindow.length - 1 ? taskWindow[rel + 1] : null, 'pos-right');
+}
+function updateNavButtons() {
+  const prev = $('#taskPrevBtn'), next = $('#taskNextBtn');
+  if (prev) prev.disabled = taskCenterIdx <= 0;
+  if (next) next.disabled = taskCenterIdx >= taskTotal - 1;
+}
+
+// dir>0：下一张（卡片向左滑）；dir<0：上一张（卡片向右滑）；每次都从服务端拉取新窗口
+async function goCarousel(dir) {
+  if (taskAnimating) return;
+  const newCenter = taskCenterIdx + dir;
+  if (newCenter < 0 || newCenter >= taskTotal) return;
+  taskAnimating = true;
+  const stage = $('#taskStage');
+  await fetchWindow(newCenter);
+  if (dir > 0) {
+    if (carouselL) { carouselL.classList.remove('pos-left'); carouselL.classList.add('pos-left-hidden'); const L = carouselL; setTimeout(() => L.remove(), 440); }
+    if (carouselC) { carouselC.classList.remove('pos-center'); carouselC.classList.add('pos-left'); }
+    if (carouselR) { carouselR.classList.remove('pos-right'); carouselR.classList.add('pos-center'); }
+    const nr = taskAtAbs(taskCenterIdx + 2);
+    const newR = makeSlot();
+    newR.className = 'task-card task-card--carousel pos-right-hidden';
+    if (nr) { newR.innerHTML = taskCardHtml(nr, 'board'); newR.style.visibility = 'visible'; }
+    else newR.style.visibility = 'hidden';
+    stage.appendChild(newR);
+    void newR.offsetWidth;
+    newR.classList.remove('pos-right-hidden'); newR.classList.add('pos-right');
+    carouselL = carouselC; carouselC = carouselR; carouselR = newR;
+  } else {
+    if (carouselR) { carouselR.classList.remove('pos-right'); carouselR.classList.add('pos-right-hidden'); const R = carouselR; setTimeout(() => R.remove(), 440); }
+    if (carouselC) { carouselC.classList.remove('pos-center'); carouselC.classList.add('pos-right'); }
+    if (carouselL) { carouselL.classList.remove('pos-left'); carouselL.classList.add('pos-center'); }
+    const nl = taskAtAbs(taskCenterIdx - 2);
+    const newL = makeSlot();
+    newL.className = 'task-card task-card--carousel pos-left-hidden';
+    if (nl) { newL.innerHTML = taskCardHtml(nl, 'board'); newL.style.visibility = 'visible'; }
+    else newL.style.visibility = 'hidden';
+    stage.appendChild(newL);
+    void newL.offsetWidth;
+    newL.classList.remove('pos-left-hidden'); newL.classList.add('pos-left');
+    carouselR = carouselC; carouselC = carouselL; carouselL = newL;
+  }
+  taskCenterIdx = newCenter;
+  updateNavButtons();
+  setTimeout(() => { taskAnimating = false; }, 440);
+}
+
+// 滑动手势：左划 → 下一张；右划 → 上一张
+function bindTaskSwipe() {
+  const stage = $('#taskStage');
+  if (!stage || taskSwipeBound) return;
+  taskSwipeBound = true;
+  let sx = 0, sy = 0;
+  stage.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; }, { passive: true });
+  stage.addEventListener('pointerup', (e) => {
+    if (!sx && !sy) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { if (dx < 0) goCarousel(1); else goCarousel(-1); }
+    sx = 0; sy = 0;
+  }, { passive: true });
 }
 function taskCardHtml(t, where) {
   const uname = SPIRIT_NAMES[t.reward.unit] ? SPIRIT_NAMES[t.reward.unit].replace('灵石', '') : '';
   const reward = `${t.reward.amount} ${SPIRIT_ICONS[t.reward.unit] || ''}${uname}`;
+  const timeReq = t.timeReq ? escapeHtml(t.timeReq) : '不限';
   let actions = '';
   if (where === 'board') {
     actions = t.iAccepted
@@ -2335,16 +2466,18 @@ function taskCardHtml(t, where) {
   // 发布者/接单方在「待确认」「已完成」状态下可见交付内容
   const showSub = t.submission && (where === 'published' || where === 'accepted') && (t.status === 'submitted' || t.status === 'done');
   return `<div class="task-card ${t.status === 'done' || t.status === 'canceled' ? 'task-card--done' : ''}">
-    <div class="task-card-head">
-      <b class="task-title">${escapeHtml(t.title)}</b>
-      <span class="task-reward">${reward}</span>
+    <div class="task-card-top">
+      <span class="task-status-badge task-status-${t.status}">${taskStatusLabel(t.status)}</span>
+      <span class="task-reward">🏆 ${reward}</span>
     </div>
-    <div class="task-meta">
-      <span class="task-tag">${deliverLabel(t.deliverType)}</span>
-      <span class="task-tag">${taskStatusLabel(t.status)}</span>
-      <span class="task-by">发布者 ${escapeHtml(t.publisherNick || '')}</span>
-    </div>
+    <h3 class="task-title">${escapeHtml(t.title)}</h3>
     ${t.desc ? `<p class="task-desc-text">${escapeHtml(t.desc)}</p>` : ''}
+    <div class="task-card-info">
+      <div class="task-info-row"><span class="ti-label">交付格式</span><span class="ti-val">${deliverLabel(t.deliverType)}</span></div>
+      <div class="task-info-row"><span class="ti-label">时间要求</span><span class="ti-val">${timeReq}</span></div>
+      <div class="task-info-row"><span class="ti-label">发布者</span><span class="ti-val">${escapeHtml(t.publisherNick || '')}</span></div>
+      <div class="task-info-row"><span class="ti-label">发布时间</span><span class="ti-val">${fmtTime(t.createdAt)}</span></div>
+    </div>
     ${showSub ? submissionHtml(t) : ''}
     <div class="task-card-foot">${actions}</div>
   </div>`;
@@ -2384,7 +2517,7 @@ async function cancelTask(id) {
   catch (e) { alert(e.message); }
 }
 function openPublishModal() {
-  $('#taskTitle').value = ''; $('#taskDesc').value = '';
+  $('#taskTitle').value = ''; $('#taskDesc').value = ''; $('#taskTimeReq').value = '';
   $('#taskRewardAmount').value = ''; $('#taskDeliverType').value = 'doc'; $('#taskRewardUnit').value = 'xp';
   show($('#taskPublishModal'), true);
 }
@@ -2396,7 +2529,7 @@ async function doPublish() {
   if (!title) { alert('请填写任务标题'); return; }
   if (!rewardAmount || rewardAmount <= 0) { alert('请填写有效的悬赏数量'); return; }
   try {
-    const r = await api('POST', '/api/tasks', { title, desc, rewardUnit, rewardAmount, deliverType: $('#taskDeliverType').value });
+    const r = await api('POST', '/api/tasks', { title, desc, rewardUnit, rewardAmount, deliverType: $('#taskDeliverType').value, timeReq: $('#taskTimeReq').value.trim() });
     show($('#taskPublishModal'), false);
     flash(`发布成功，已托管 ${r.task.reward.amount} ${SPIRIT_NAMES[r.task.reward.unit].replace('灵石', '')} 灵石`);
     if (meData && meData.spirit) meData.spirit = r.spirit;
@@ -2411,6 +2544,18 @@ async function loadMeTimedTasks() {
     if (!mine.accepted.length) { box.innerHTML = '<div class="empty">还没有接取限时任务</div>'; return; }
     box.innerHTML = mine.accepted.map((t) => `<div class="me-timed-row"><b>${escapeHtml(t.title)}</b><span class="task-tag">${taskStatusLabel(t.status)}</span>${t.status === 'accepted' ? `<button class="btn-ghost task-act-btn" data-act="tasksubmit" data-id="${t.id}">提交</button>` : ''}</div>`).join('');
   } catch { box.innerHTML = '<div class="empty">加载失败</div>'; }
+}
+// 我的任务：弹出查看已接取的任务
+function openMyTasks() {
+  const box = $('#myTasksList'); if (!box) return;
+  box.innerHTML = taskBoardData.accepted.length
+    ? taskBoardData.accepted.map((t) => taskCardHtml(t, 'accepted')).join('')
+    : '<div class="empty">还没有接取任务，去皇榜揭榜吧～</div>';
+  const pub = $('#myTasksPublished');
+  if (pub) pub.innerHTML = taskBoardData.published.length
+    ? taskBoardData.published.map((t) => taskCardHtml(t, 'published')).join('')
+    : '<div class="empty">还没有发布任务</div>';
+  show($('#myTasksModal'), true);
 }
 // 视图布局切换（4.1）
 function setLayout(n) {
@@ -2467,6 +2612,8 @@ function initTasksUI() {
   if ($p('taskSubmitClose')) $p('taskSubmitClose').onclick = () => show($p('taskSubmitModal'), false);
   if ($p('taskSubmitOk')) $p('taskSubmitOk').onclick = doSubmit;
   if ($p('taskDetailClose')) $p('taskDetailClose').onclick = () => show($p('taskDetailModal'), false);
+  if ($p('myTasksClose')) $p('myTasksClose').onclick = () => show($p('myTasksModal'), false);
+  const mt = $p('myTasksModal'); if (mt) mt.addEventListener('click', (e) => { if (e.target === mt) show(mt, false); });
   if ($p('taskSubmitFileBtn')) $p('taskSubmitFileBtn').onclick = () => $p('taskSubmitFile').click();
   if ($p('taskSubmitFile')) $p('taskSubmitFile').onchange = (e) => {
     const file = e.target.files[0]; if (!file) return;

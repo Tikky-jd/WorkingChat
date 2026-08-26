@@ -92,7 +92,7 @@ function publicTask(t, me) {
   const v = {
     id: t.id, publisher: t.publisher, publisherNick: nickOf(t.publisher),
     title: t.title, desc: t.desc, reward: t.reward, deliverType: t.deliverType,
-    status: t.status, createdAt: t.createdAt,
+    status: t.status, createdAt: t.createdAt, timeReq: t.timeReq || '',
     acceptedAt: t.acceptedAt || null, submittedAt: t.submittedAt || null, doneAt: t.doneAt || null,
   };
   v.iAmPublisher = t.publisher === me;
@@ -1195,8 +1195,14 @@ async function requestHandler(req, res) {
     // ---- 任务发布板块（皇榜）：发布 / 揭榜 / 提交 / 确认 / 取消 / 退单 ----
       if (p === '/api/tasks' && method === 'GET') {
         const me2 = currentUser(req); if (!me2) return sendJson(res, 401, { error: '未登录' });
-        const list = tasks.filter((t) => t.status === 'open').sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map((t) => publicTask(t, me2));
-        return sendJson(res, 200, { tasks: list });
+        const all = tasks.filter((t) => t.status === 'open').sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        const total = all.length;
+        const q = url.parse(req.url, true).query;
+        const offset = Math.max(0, parseInt(q.offset, 10) || 0);
+        const limit = parseInt(q.limit, 10);
+        const slice = (!isNaN(limit) && limit > 0) ? all.slice(offset, offset + limit) : all;
+        const list = slice.map((t) => publicTask(t, me2));
+        return sendJson(res, 200, { total, tasks: list });
       }
       if (p === '/api/tasks/mine' && method === 'GET') {
         const me2 = currentUser(req); if (!me2) return sendJson(res, 401, { error: '未登录' });
@@ -1212,13 +1218,14 @@ async function requestHandler(req, res) {
         const desc = (b.desc || '').trim();
         const unit = b.rewardUnit; const amount = Number(b.rewardAmount);
         const deliverType = b.deliverType;
+        const timeReq = (b.timeReq || '').toString().trim().slice(0, 40);
         if (!title) return sendJson(res, 400, { error: '请填写任务标题' });
         if (!SPIRIT_ORDER.includes(unit)) return sendJson(res, 400, { error: '灵石类型无效' });
         if (!Number.isFinite(amount) || amount <= 0) return sendJson(res, 400, { error: '悬赏数量必须大于 0' });
         if (!TASK_DELIVER_TYPES.includes(deliverType)) return sendJson(res, 400, { error: '交付类型无效' });
         if ((u.spirit[unit] || 0) < amount) return sendJson(res, 400, { error: `灵石不足：需要 ${amount} 枚${SPIRIT_NAMES[unit]}` });
         addSpirit(u, unit, -amount, '发布任务托管(' + title + ')'); // 托管：先扣除，平台代管，确认后转给接单方
-        const t = { id: crypto.randomUUID(), publisher: me2, title, desc, reward: { unit, amount }, deliverType, status: 'open', acceptedBy: null, acceptedAt: null, submission: null, submittedAt: null, confirmedAt: null, createdAt: Date.now(), doneAt: null, canceledAt: null };
+        const t = { id: crypto.randomUUID(), publisher: me2, title, desc, reward: { unit, amount }, deliverType, timeReq, status: 'open', acceptedBy: null, acceptedAt: null, submission: null, submittedAt: null, confirmedAt: null, createdAt: Date.now(), doneAt: null, canceledAt: null };
         tasks.push(t); saveUsers(); saveTasks();
         pushAll({ type: 'task', action: 'new', task: publicTask(t, me2) });
         return sendJson(res, 200, { ok: true, task: publicTask(t, me2), spirit: u.spirit });

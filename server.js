@@ -75,6 +75,32 @@ let moans = readJson(jf('moans.json'), []);   // 匿名树洞 { id, text, time }
 let kb = readJson(jf('kb.json'), { folders: [], docs: [] }); // 团队知识库 { folders:[{id,name,parent}], docs:[{id,folderId,title,content,createdBy,updatedBy,createdAt,updatedAt}] }
 let media = readJson(jf('media.json'), []); // 平台媒体库 { id,name,type,ext,size,path,uploadedBy,createdAt }
 let talismanLog = readJson(jf('talisman_log.json'), []); // 道具/符使用记录 { id, text, by, item, time }（最多 100 条）
+// 任务发布板块（皇榜）：发布者悬赏灵石 → 接单方揭榜 → 提交交付 → 发布者确认后灵石到手
+// { id, publisher, title, desc, reward:{unit,amount}, deliverType, status, acceptedBy, acceptedAt,
+//   submission:{text,url,name,type}, submittedAt, confirmedAt, createdAt, doneAt, canceledAt }
+// status: 'open' 待揭榜 | 'accepted' 已接单 | 'submitted' 已提交待确认 | 'done' 已完成 | 'canceled' 已取消/已退单
+let tasks = readJson(jf('tasks.json'), []);
+function saveTasks() { writeJson(jf('tasks.json'), tasks); }
+// 某用户当前已接取（限时任务）数量：接单且未完成（accepted/submitted）的都算占用名额
+function activeAcceptedCount(email) {
+  return tasks.filter((t) => t.acceptedBy === email && (t.status === 'accepted' || t.status === 'submitted')).length;
+}
+const MAX_TIMED_TASKS = 3;
+const TASK_DELIVER_TYPES = ['doc', 'video', 'image', 'audio'];
+// 任务对外视图：隐藏非必要隐私；提交内容仅对发布者/接单方可见
+function publicTask(t, me) {
+  const v = {
+    id: t.id, publisher: t.publisher, publisherNick: nickOf(t.publisher),
+    title: t.title, desc: t.desc, reward: t.reward, deliverType: t.deliverType,
+    status: t.status, createdAt: t.createdAt,
+    acceptedAt: t.acceptedAt || null, submittedAt: t.submittedAt || null, doneAt: t.doneAt || null,
+  };
+  v.iAmPublisher = t.publisher === me;
+  v.iAccepted = t.acceptedBy === me;
+  if (t.status !== 'open' && t.acceptedBy) { v.acceptedBy = t.acceptedBy; v.acceptedByNick = nickOf(t.acceptedBy); }
+  if (t.status === 'submitted' || t.status === 'done') { if (v.iAmPublisher || v.iAccepted) v.submission = t.submission || null; }
+  return v;
+}
 // 启动时清理过期 token
 for (const k in sessions) if (sessions[k] && sessions[k].exp && sessions[k].exp < Date.now()) delete sessions[k];
 
@@ -299,7 +325,7 @@ function dailyTaskDone(u, taskId, dayStart) {
     case 't2': return todos.some((t) => t.done && t.doneBy === e && t.doneAt >= dayStart);
     case 't3': return kb.docs.some((d) => d.createdBy === e && d.createdAt >= dayStart);
     case 't4': return moans.some((x) => x.by === e && x.time >= dayStart);
-    case 't5': return todos.some((t) => t.done && t.by !== e && t.confirmed && t.doneAt >= dayStart);
+    case 't5': return tasks.some((t) => t.acceptedBy === e && t.status === 'done' && (t.doneAt || t.confirmedAt || 0) >= dayStart);
   }
   return false;
 }
@@ -402,6 +428,21 @@ function saveDataUrl(dataUrl, prefix) {
   const fname = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
   fs.writeFileSync(path.join(UPLOADS_DIR, fname), buf);
   return '/uploads/' + fname;
+}
+
+// 通用文件保存（任务交付等）：支持任意 MIME（文档/视频/音频/图片），返回 /uploads/xxx
+const UPLOAD_EXTS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/ogg': 'ogg', 'application/pdf': 'pdf', 'application/msword': 'doc', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx', 'text/plain': 'txt', 'application/zip': 'zip' };
+function saveUpload(dataUrl, prefix, maxBytes) {
+  const mm = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!mm) throw new Error('文件格式无法识别');
+  const mime = mm[1].toLowerCase();
+  const ext = UPLOAD_EXTS[mime];
+  if (!ext) throw new Error('不支持的文件类型：' + mime);
+  const buf = Buffer.from(mm[2], 'base64');
+  if (maxBytes && buf.length > maxBytes) throw new Error('文件超过 ' + Math.round(maxBytes / 1024 / 1024) + 'MB 限制');
+  const fname = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  fs.writeFileSync(path.join(UPLOADS_DIR, fname), buf);
+  return { path: '/uploads/' + fname, ext, mime };
 }
 
 // 每月清理：删除 30 天前的消息，并清理无用上传文件
@@ -1132,7 +1173,101 @@ async function requestHandler(req, res) {
       pushAll({ type: 'heart', action: 'clear', session: publicHeart(s, me) });
       return sendJson(res, 200, { ok: true, session: publicHeart(s, me) });
     }
-    // ---- 在线状态（全局：登录即计在线时长，跨房间/仪表盘都累计）----
+    // ---- 任务发布板块（皇榜）：发布 / 揭榜 / 提交 / 确认 / 取消 / 退单 ----
+      if (p === '/api/tasks' && method === 'GET') {
+        const me2 = currentUser(req); if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const list = tasks.filter((t) => t.status === 'open').sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map((t) => publicTask(t, me2));
+        return sendJson(res, 200, { tasks: list });
+      }
+      if (p === '/api/tasks/mine' && method === 'GET') {
+        const me2 = currentUser(req); if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const published = tasks.filter((t) => t.publisher === me2).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map((t) => publicTask(t, me2));
+        const accepted = tasks.filter((t) => t.acceptedBy === me2 && t.status !== 'canceled').sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map((t) => publicTask(t, me2));
+        return sendJson(res, 200, { published, accepted, timedUsed: activeAcceptedCount(me2), timedMax: MAX_TIMED_TASKS });
+      }
+      if (p === '/api/tasks' && method === 'POST') {
+        const me2 = currentUser(req); if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const b = JSON.parse(await readBody(req) || '{}');
+        const title = (b.title || '').trim();
+        const desc = (b.desc || '').trim();
+        const unit = b.rewardUnit; const amount = Number(b.rewardAmount);
+        const deliverType = b.deliverType;
+        if (!title) return sendJson(res, 400, { error: '请填写任务标题' });
+        if (!SPIRIT_ORDER.includes(unit)) return sendJson(res, 400, { error: '灵石类型无效' });
+        if (!Number.isFinite(amount) || amount <= 0) return sendJson(res, 400, { error: '悬赏数量必须大于 0' });
+        if (!TASK_DELIVER_TYPES.includes(deliverType)) return sendJson(res, 400, { error: '交付类型无效' });
+        if ((u.spirit[unit] || 0) < amount) return sendJson(res, 400, { error: `灵石不足：需要 ${amount} 枚${SPIRIT_NAMES[unit]}` });
+        u.spirit[unit] -= amount; // 托管：先扣除，平台代管，确认后转给接单方
+        const t = { id: crypto.randomUUID(), publisher: me2, title, desc, reward: { unit, amount }, deliverType, status: 'open', acceptedBy: null, acceptedAt: null, submission: null, submittedAt: null, confirmedAt: null, createdAt: Date.now(), doneAt: null, canceledAt: null };
+        tasks.push(t); saveUsers(); saveTasks();
+        pushAll({ type: 'task', action: 'new', task: publicTask(t, me2) });
+        return sendJson(res, 200, { ok: true, task: publicTask(t, me2), spirit: u.spirit });
+      }
+      const taskAct = p.match(/^\/api\/tasks\/([^/]+)\/(accept|submit|confirm|cancel|quit)$/);
+      if (taskAct && method === 'POST') {
+        const me2 = currentUser(req); if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const t = tasks.find((x) => x.id === taskAct[1]);
+        if (!t) return sendJson(res, 404, { error: '任务不存在' });
+        const action = taskAct[2];
+        if (action === 'accept') {
+          if (t.status !== 'open') return sendJson(res, 400, { error: '该任务已被接取或已完成' });
+          if (t.publisher === me2) return sendJson(res, 400, { error: '不能接取自己发布的任务' });
+          if (activeAcceptedCount(me2) >= MAX_TIMED_TASKS) return sendJson(res, 400, { error: '请先完成手头的任务再来揭榜吧！' });
+          t.status = 'accepted'; t.acceptedBy = me2; t.acceptedAt = Date.now();
+          saveTasks();
+          pushAll({ type: 'task', action: 'accept', task: publicTask(t, me2) });
+          return sendJson(res, 200, { ok: true, task: publicTask(t, me2) });
+        }
+        if (action === 'submit') {
+          if (t.acceptedBy !== me2) return sendJson(res, 403, { error: '只有接单方可以提交' });
+          if (t.status !== 'accepted') return sendJson(res, 400, { error: '当前状态不可提交' });
+          const b = JSON.parse(await readBody(req) || '{}');
+          const text = (b.text || '').trim();
+          const submission = { text: text || null, url: null, name: null, type: null };
+          if (b.fileDataUrl) {
+            try { const saved = saveUpload(b.fileDataUrl, 'task', 80 * 1024 * 1024); submission.url = saved.path; submission.name = b.fileName || ('file.' + saved.ext); submission.type = saved.mime; }
+            catch (e) { return sendJson(res, 400, { error: e.message }); }
+          }
+          if (!submission.text && !submission.url) return sendJson(res, 400, { error: '请提交交付内容（文字或文件）' });
+          t.submission = submission; t.status = 'submitted'; t.submittedAt = Date.now();
+          saveTasks();
+          pushAll({ type: 'task', action: 'submit', task: publicTask(t, me2) });
+          return sendJson(res, 200, { ok: true, task: publicTask(t, me2) });
+        }
+        if (action === 'confirm') {
+          if (t.publisher !== me2) return sendJson(res, 403, { error: '只有发布者可以确认' });
+          if (t.status !== 'submitted') return sendJson(res, 400, { error: '接单方尚未提交，无法确认' });
+          const acceptor = ensureUser(users.find((x) => x.email === t.acceptedBy));
+          acceptor.spirit[t.reward.unit] = (acceptor.spirit[t.reward.unit] || 0) + t.reward.amount; // 托管发放
+          t.status = 'done'; t.confirmedAt = Date.now(); t.doneAt = Date.now();
+          saveUsers(); saveTasks();
+          pushAll({ type: 'task', action: 'confirm', task: publicTask(t, me2) });
+          return sendJson(res, 200, { ok: true, task: publicTask(t, me2) });
+        }
+        if (action === 'cancel') {
+          if (t.publisher !== me2) return sendJson(res, 403, { error: '只有发布者可以取消' });
+          if (t.status !== 'open') return sendJson(res, 400, { error: '任务已被接取，无法取消（可等接单方退单）' });
+          const u = ensureUser(users.find((x) => x.email === me2));
+          u.spirit[t.reward.unit] = (u.spirit[t.reward.unit] || 0) + t.reward.amount; // 退回托管
+          t.status = 'canceled'; t.canceledAt = Date.now();
+          saveUsers(); saveTasks();
+          pushAll({ type: 'task', action: 'cancel', task: publicTask(t, me2) });
+          return sendJson(res, 200, { ok: true, task: publicTask(t, me2), spirit: u.spirit });
+        }
+        if (action === 'quit') {
+          if (t.acceptedBy !== me2) return sendJson(res, 403, { error: '只有接单方可以退单' });
+          if (t.status !== 'accepted' && t.status !== 'submitted') return sendJson(res, 400, { error: '当前状态不可退单' });
+          const pub = ensureUser(users.find((x) => x.email === t.publisher));
+          pub.spirit[t.reward.unit] = (pub.spirit[t.reward.unit] || 0) + t.reward.amount; // 退回发布者托管
+          t.status = 'canceled'; t.acceptedBy = null; t.acceptedAt = null; t.submission = null; t.submittedAt = null; t.canceledAt = Date.now();
+          saveUsers(); saveTasks();
+          pushAll({ type: 'task', action: 'quit', task: publicTask(t, me2) });
+          return sendJson(res, 200, { ok: true, task: publicTask(t, me2) });
+        }
+      }
+
+      // ---- 在线状态（全局：登录即计在线时长，跨房间/仪表盘都累计）----
       if (p === '/api/presence' && method === 'POST') {
         const b = JSON.parse(await readBody(req) || '{}');
         const now = Date.now();

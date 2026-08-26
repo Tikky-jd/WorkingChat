@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>协作台 · 企业团队私有协作空间</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='14' fill='%232563eb'/%3E%3Crect x='16' y='18' width='32' height='5' rx='2.5' fill='white' opacity='0.95'/%3E%3Crect x='16' y='29' width='22' height='5' rx='2.5' fill='white' opacity='0.8'/%3E%3Crect x='16' y='40' width='28' height='5' rx='2.5' fill='white' opacity='0.65'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="./styles.css?v=20260825h" />
+  <link rel="stylesheet" href="./styles.css?v=20260826a" />
 </head>
 <body data-theme="blue">
   <div id="bgLayer"></div>
@@ -171,6 +171,15 @@
         <button class="feat-card" data-act="view" data-view="vote"><span class="feat-ico">🗳</span><b>团队投票</b><i>内部投票 · 结果实时</i></button>
         <button class="feat-card" data-act="view" data-view="moan"><span class="feat-ico">📨</span><b>意见反馈</b><i>员工心声 · 匿名提交</i></button>
         <button class="feat-card" data-act="view" data-view="kb"><span class="feat-ico">📚</span><b>团队知识库</b><i>知识沉淀 · 全员协作</i></button>
+        <button class="feat-card feat-card--task" data-act="view" data-view="tasks"><span class="feat-ico">👑</span><b>皇榜</b><i>任务发布 · 接单悬赏</i></button>
+        <button id="multiFuncBtn" class="feat-multi" title="展开四宫格面板（媒体管理 / 投票 / 反馈 / 知识库）">🧩 多功能</button>
+        <div class="layout-switch" id="layoutSwitch">
+          <button class="layout-sq active" data-layout="0" title="默认布局：四宫格（AI任务区 + 代办清单 + 备注 + 今日活跃）">▦</button>
+          <button class="layout-sq" data-layout="1" title="仅显示 AI 任务区">🤖</button>
+          <button class="layout-sq" data-layout="2" title="仅显示 代办清单">✅</button>
+          <button class="layout-sq" data-layout="3" title="仅显示 备注">📝</button>
+          <button class="layout-sq" data-layout="4" title="仅显示 今日活跃">👥</button>
+        </div>
       </div>
 
       <!-- 移动端面板切换（桌面端隐藏，点哪个放大哪个） -->
@@ -376,6 +385,31 @@
     </div>
   </section>
 
+  <!-- 页面：任务发布（皇榜） -->
+  <section id="page-tasks" class="page hidden">
+    <header class="page-head">
+      <button class="btn-ghost page-back" data-act="view" data-view="main">← 返回<span class="back-detail">工作台</span></button>
+      <h2>👑 皇榜 · 任务发布</h2>
+      <button id="taskPublishBtn" class="btn-new">📋 发布任务</button>
+    </header>
+    <div class="page-body tasks-body">
+      <div class="tasks-col">
+        <h3 class="tasks-h">📜 悬赏任务（皇榜）</h3>
+        <div id="taskBoard" class="task-board"><div class="empty">加载中…</div></div>
+      </div>
+      <div class="tasks-col tasks-col--side">
+        <div class="tasks-sub">
+          <h3 class="tasks-h">🙋 我接的任务（限时 <span id="timedUsed">0</span>/<span id="timedMax">3</span>）</h3>
+          <div id="taskAccepted" class="task-list"><div class="empty">还没有接取任务</div></div>
+        </div>
+        <div class="tasks-sub">
+          <h3 class="tasks-h">📌 我发布的任务</h3>
+          <div id="taskPublished" class="task-list"><div class="empty">还没有发布任务</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- 新建任务弹窗 -->
   <div id="taskModal" class="modal hidden">
     <div class="modal-card">
@@ -554,6 +588,64 @@
     </div>
   </div>
 
+  <!-- 发布任务弹窗 -->
+  <div id="taskPublishModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3>📋 发布任务（悬赏灵石）</h3><button id="taskPublishClose" class="btn-ghost">✕</button></div>
+      <input id="taskTitle" class="input" placeholder="任务标题，如：整理本周会议纪要" maxlength="80" />
+      <textarea id="taskDesc" class="composer-input task-desc" placeholder="任务说明（交付标准、要求等）" rows="3" maxlength="1000"></textarea>
+      <p class="modal-label">交付内容类型</p>
+      <select id="taskDeliverType" class="input">
+        <option value="doc">📄 文档</option>
+        <option value="video">🎬 视频</option>
+        <option value="image">🖼 图片</option>
+        <option value="audio">🎵 音频</option>
+      </select>
+      <p class="modal-label">悬赏灵石</p>
+      <div class="task-reward-row">
+        <input id="taskRewardAmount" class="input task-reward-amt" type="number" min="1" placeholder="数量" />
+        <select id="taskRewardUnit" class="input task-reward-unit">
+          <option value="xp">⚪ 下品灵石</option>
+          <option value="zp">🪨 中品灵石</option>
+          <option value="sp">🔮 上品灵石</option>
+          <option value="jp">💎 极品灵石</option>
+        </select>
+      </div>
+      <p class="modal-hint" id="taskPublishHint">发布后悬赏灵石将预先扣除并由平台托管，接单方完成并经你确认后到账。</p>
+      <div class="modal-foot">
+        <button id="taskPublishOk" class="btn-primary">发布并托管灵石</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 任务交付提交弹窗 -->
+  <div id="taskSubmitModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><span id="taskSubmitTitle">📤 提交交付内容</span><button id="taskSubmitClose" class="modal-x">✕</button></div>
+      <div class="modal-body">
+        <p class="muted" id="taskSubmitReq"></p>
+        <textarea id="taskSubmitText" class="composer-input" placeholder="交付说明（可选）" rows="3"></textarea>
+        <div class="heart-submit-tools">
+          <button id="taskSubmitFileBtn" class="tool-btn" title="上传交付文件">📎 文件</button>
+          <input id="taskSubmitFile" type="file" hidden />
+        </div>
+        <div id="taskSubmitChip" class="img-chip hidden"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="taskSubmitOk" class="btn-primary">提交交付</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 任务详情 / 审核弹窗 -->
+  <div id="taskDetailModal" class="modal hidden">
+    <div class="modal-card wide">
+      <div class="modal-head"><span id="taskDetailTitle">任务详情</span><button id="taskDetailClose" class="modal-x">✕</button></div>
+      <div class="modal-body" id="taskDetailBody"></div>
+      <div class="modal-foot" id="taskDetailFoot"></div>
+    </div>
+  </div>
+
   <!-- 任务设置菜单（右键任务） -->
   <div id="roomMenu" class="ctx-menu hidden">
     <button id="roomNotifToggle" class="ctx-item">关闭浏览器提示</button>
@@ -577,6 +669,6 @@
   </div>
 
   <script src="./config.js?v=20260821b"></script>
-  <script src="./app.js?v=20260825i"></script>
+  <script src="./app.js?v=20260826a"></script>
 </body>
 </html>

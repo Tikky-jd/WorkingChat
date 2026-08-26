@@ -669,6 +669,12 @@ function connectSSE() {
             if (hm && !hm.classList.contains('hidden')) renderHeartList(meData.heartSessions);
           }
         }
+        else if (d.type === 'task') {
+          if (currentView === 'tasks') loadTasks().catch(() => {});
+          else if (currentView === 'me') loadMe().catch(() => {});
+          const t = d.task || {};
+          if (t.title) flash('📋 任务更新：' + escapeHtml(t.title));
+        }
         else if (d.type === 'roomDeleted') {
           unread[d.roomId] = 0;
           if (d.roomId === currentRoomId) {
@@ -945,6 +951,7 @@ function goView(name) {
   show($('#page-vote'), name === 'vote');
   show($('#page-moan'), name === 'moan');
   show($('#page-kb'), name === 'kb');
+  show($('#page-tasks'), name === 'tasks');
   if (name === 'main') startRoomLive();
   else stopRoomTimers();
   if (name === 'me') loadMe();
@@ -952,6 +959,7 @@ function goView(name) {
   if (name === 'vote') loadVotes();
   if (name === 'moan') loadMoans();
   if (name === 'kb') loadKb();
+  if (name === 'tasks') loadTasks();
 }
 window.goView = goView;
 
@@ -1136,11 +1144,19 @@ function renderTasksPane() {
             : `<button id="newbieGoBtn" class="btn-ghost" data-me="profile">去填写资料 →</button>`}
         </div>
       </div>
+    </div>
+    <div class="me-card">
+      <h3 class="me-card-t">🙋 限时任务 <span class="me-hint">在皇榜揭榜接取，最多同时 3 个</span></h3>
+      <div id="meTimedTasks"><div class="empty">加载中…</div></div>
+      <div class="me-card-foot">
+        <button class="btn-ghost" data-act="gotasks">📋 更多任务（皇榜）</button>
+      </div>
     </div>`;
   const sb = $('#signinBtn');
   if (sb && !d.signedToday) sb.onclick = doSignin;
   if ($('#newbieClaimBtn')) $('#newbieClaimBtn').onclick = claimNewbie;
   if ($('#newbieGoBtn')) $('#newbieGoBtn').onclick = () => { renderProfileEdit(); $('#meProfile').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  loadMeTimedTasks();
 }
 function signinGrid(dates) {
   const now = new Date();
@@ -1622,6 +1638,12 @@ document.addEventListener('click', (e) => {
   else if (act === 'kbemoji') show($('#kbEmojiPanel'), $('#kbEmojiPanel').classList.contains('hidden'));
   else if (act === 'emoji') { insertAtCursor(el.dataset.e); show($('#kbEmojiPanel'), false); }
   else if (act === 'kbnewdoc') newKbDoc(el.dataset.folder);
+  else if (act === 'taskaccept') acceptTask(el.dataset.id);
+  else if (act === 'tasksubmit') openSubmitModal(el.dataset.id);
+  else if (act === 'taskconfirm') confirmTask(el.dataset.id);
+  else if (act === 'taskquit') quitTask(el.dataset.id);
+  else if (act === 'taskcancel') cancelTask(el.dataset.id);
+  else if (act === 'gotasks') goView('tasks');
 });
 
 // ---------- 媒体管理（原工作日报板块改造；分页，每页 12 条） ----------
@@ -2197,6 +2219,172 @@ $('#kbSearch').addEventListener('input', (e) => {
   }, 300);
 });
 
+// ---------- 任务发布板块（皇榜） ----------
+let taskBoardData = { open: [], published: [], accepted: [] };
+let pendingTaskFile = null;     // 提交交付时的临时文件
+let submitTaskId = null;
+const DELIVER_LABEL = { doc: '📄 文档', video: '🎬 视频', image: '🖼 图片', audio: '🎵 音频' };
+const TASK_STATUS_LABEL = { open: '待揭榜', accepted: '进行中', submitted: '待确认', done: '已完成', canceled: '已取消/已退单' };
+function deliverLabel(t) { return DELIVER_LABEL[t] || t; }
+function taskStatusLabel(s) { return TASK_STATUS_LABEL[s] || s; }
+
+async function loadTasks() {
+  try {
+    const [board, mine] = await Promise.all([api('GET', '/api/tasks'), api('GET', '/api/tasks/mine')]);
+    taskBoardData.open = board.tasks || [];
+    taskBoardData.published = mine.published || [];
+    taskBoardData.accepted = mine.accepted || [];
+    const tu = $('#timedUsed'); if (tu) tu.textContent = mine.timedUsed || 0;
+    const tm = $('#timedMax'); if (tm) tm.textContent = mine.timedMax || 3;
+    renderTasks();
+  } catch (e) { const b = $('#taskBoard'); if (b) b.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+}
+function renderTasks() {
+  const board = $('#taskBoard');
+  board.innerHTML = taskBoardData.open.length
+    ? taskBoardData.open.map((t) => taskCardHtml(t, 'board')).join('')
+    : '<div class="empty">还没有悬赏任务，去发布一个吧～</div>';
+  const acc = $('#taskAccepted');
+  acc.innerHTML = taskBoardData.accepted.length
+    ? taskBoardData.accepted.map((t) => taskCardHtml(t, 'accepted')).join('')
+    : '<div class="empty">还没有接取任务</div>';
+  const pub = $('#taskPublished');
+  pub.innerHTML = taskBoardData.published.length
+    ? taskBoardData.published.map((t) => taskCardHtml(t, 'published')).join('')
+    : '<div class="empty">还没有发布任务</div>';
+}
+function taskCardHtml(t, where) {
+  const uname = SPIRIT_NAMES[t.reward.unit] ? SPIRIT_NAMES[t.reward.unit].replace('灵石', '') : '';
+  const reward = `${t.reward.amount} ${SPIRIT_ICONS[t.reward.unit] || ''}${uname}`;
+  let actions = '';
+  if (where === 'board') {
+    actions = t.iAccepted
+      ? `<span class="task-tag">你已接取</span>`
+      : `<button class="btn-primary task-act-btn" data-act="taskaccept" data-id="${t.id}">🙋 揭榜</button>`;
+  } else if (where === 'accepted') {
+    if (t.status === 'accepted') actions = `<button class="btn-primary task-act-btn" data-act="tasksubmit" data-id="${t.id}">📤 提交交付</button><button class="btn-ghost task-act-btn" data-act="taskquit" data-id="${t.id}">退单</button>`;
+    else if (t.status === 'submitted') actions = `<span class="task-tag">已提交 · 待发布者确认</span>`;
+    else if (t.status === 'done') actions = `<span class="task-tag task-done">已完成 · 灵石已到账</span>`;
+  } else if (where === 'published') {
+    if (t.status === 'open') actions = `<button class="btn-ghost task-act-btn" data-act="taskcancel" data-id="${t.id}">取消（退灵石）</button>`;
+    else if (t.status === 'submitted') actions = `<button class="btn-primary task-act-btn" data-act="taskconfirm" data-id="${t.id}">✅ 确认完成并发放</button>`;
+    else if (t.status === 'accepted') actions = `<span class="task-tag">已接取（${escapeHtml(t.acceptedByNick || '')}）</span>`;
+    else if (t.status === 'done') actions = `<span class="task-tag task-done">已完成</span>`;
+  }
+  return `<div class="task-card ${t.status === 'done' || t.status === 'canceled' ? 'task-card--done' : ''}">
+    <div class="task-card-head">
+      <b class="task-title">${escapeHtml(t.title)}</b>
+      <span class="task-reward">${reward}</span>
+    </div>
+    <div class="task-meta">
+      <span class="task-tag">${deliverLabel(t.deliverType)}</span>
+      <span class="task-tag">${taskStatusLabel(t.status)}</span>
+      <span class="task-by">发布者 ${escapeHtml(t.publisherNick || '')}</span>
+    </div>
+    ${t.desc ? `<p class="task-desc-text">${escapeHtml(t.desc)}</p>` : ''}
+    <div class="task-card-foot">${actions}</div>
+  </div>`;
+}
+async function acceptTask(id) {
+  try { await api('POST', `/api/tasks/${id}/accept`); flash('揭榜成功！任务已加入你的限时任务'); loadTasks(); }
+  catch (e) { alert(e.message); }
+}
+function openSubmitModal(id) {
+  submitTaskId = id;
+  const t = taskBoardData.accepted.find((x) => x.id === id);
+  $('#taskSubmitReq').textContent = t ? `要求交付类型：${deliverLabel(t.deliverType)}` : '';
+  $('#taskSubmitText').value = '';
+  pendingTaskFile = null; const chip = $('#taskSubmitChip'); chip.classList.add('hidden'); chip.textContent = '';
+  show($('#taskSubmitModal'), true);
+}
+async function doSubmit() {
+  if (!submitTaskId) return;
+  const body = { text: $('#taskSubmitText').value };
+  if (pendingTaskFile) { body.fileDataUrl = pendingTaskFile.dataUrl; body.fileName = pendingTaskFile.name; }
+  try { await api('POST', `/api/tasks/${submitTaskId}/submit`, body); show($('#taskSubmitModal'), false); flash('交付已提交，等待发布者确认'); loadTasks(); }
+  catch (e) { alert(e.message); }
+}
+async function confirmTask(id) {
+  if (!confirm('确认该任务已完成，并将悬赏灵石发放给接单方？')) return;
+  try { await api('POST', `/api/tasks/${id}/confirm`); flash('已确认，灵石已发放'); loadTasks(); }
+  catch (e) { alert(e.message); }
+}
+async function quitTask(id) {
+  if (!confirm('确定退单吗？任务将退回皇榜，悬赏灵石退回发布者。')) return;
+  try { await api('POST', `/api/tasks/${id}/quit`); flash('已退单'); loadTasks(); }
+  catch (e) { alert(e.message); }
+}
+async function cancelTask(id) {
+  if (!confirm('取消发布？悬赏灵石将退回你的账户。')) return;
+  try { await api('POST', `/api/tasks/${id}/cancel`); flash('已取消，灵石已退回'); loadTasks(); }
+  catch (e) { alert(e.message); }
+}
+function openPublishModal() {
+  $('#taskTitle').value = ''; $('#taskDesc').value = '';
+  $('#taskRewardAmount').value = ''; $('#taskDeliverType').value = 'doc'; $('#taskRewardUnit').value = 'xp';
+  show($('#taskPublishModal'), true);
+}
+async function doPublish() {
+  const title = $('#taskTitle').value.trim();
+  const desc = $('#taskDesc').value.trim();
+  const rewardUnit = $('#taskRewardUnit').value;
+  const rewardAmount = Number($('#taskRewardAmount').value);
+  if (!title) { alert('请填写任务标题'); return; }
+  if (!rewardAmount || rewardAmount <= 0) { alert('请填写有效的悬赏数量'); return; }
+  try {
+    const r = await api('POST', '/api/tasks', { title, desc, rewardUnit, rewardAmount, deliverType: $('#taskDeliverType').value });
+    show($('#taskPublishModal'), false);
+    flash(`发布成功，已托管 ${r.task.reward.amount} ${SPIRIT_NAMES[r.task.reward.unit].replace('灵石', '')} 灵石`);
+    if (meData && meData.spirit) meData.spirit = r.spirit;
+    loadTasks();
+  } catch (e) { alert(e.message); }
+}
+// 个人中心「限时任务」区填充
+async function loadMeTimedTasks() {
+  const box = $('#meTimedTasks'); if (!box) return;
+  try {
+    const mine = await api('GET', '/api/tasks/mine');
+    if (!mine.accepted.length) { box.innerHTML = '<div class="empty">还没有接取限时任务</div>'; return; }
+    box.innerHTML = mine.accepted.map((t) => `<div class="me-timed-row"><b>${escapeHtml(t.title)}</b><span class="task-tag">${taskStatusLabel(t.status)}</span>${t.status === 'accepted' ? `<button class="btn-ghost task-act-btn" data-act="tasksubmit" data-id="${t.id}">提交</button>` : ''}</div>`).join('');
+  } catch { box.innerHTML = '<div class="empty">加载失败</div>'; }
+}
+// 视图布局切换（4.1）
+function setLayout(n) {
+  const grid = document.querySelector('.grid');
+  grid.classList.remove('layout-0', 'layout-1', 'layout-2', 'layout-3', 'layout-4');
+  grid.classList.add('layout-' + n);
+  document.querySelectorAll('#layoutSwitch .layout-sq').forEach((b) => b.classList.toggle('active', Number(b.dataset.layout) === n));
+}
+// 多功能按钮：四面板从左到右依次出现动画（4.3）
+function triggerPanelReveal() {
+  const panels = document.querySelectorAll('.grid .panel');
+  panels.forEach((p, i) => {
+    p.classList.remove('reveal-in');
+    void p.offsetWidth; // 强制重排以重启动画
+    p.style.animationDelay = (i * 120) + 'ms';
+    p.classList.add('reveal-in');
+  });
+  setTimeout(() => panels.forEach((p) => { p.style.animationDelay = ''; }), panels.length * 120 + 700);
+}
+function initTasksUI() {
+  const $p = (id) => document.getElementById(id);
+  if ($p('taskPublishBtn')) $p('taskPublishBtn').onclick = openPublishModal;
+  if ($p('taskPublishClose')) $p('taskPublishClose').onclick = () => show($p('taskPublishModal'), false);
+  if ($p('taskPublishOk')) $p('taskPublishOk').onclick = doPublish;
+  if ($p('taskSubmitClose')) $p('taskSubmitClose').onclick = () => show($p('taskSubmitModal'), false);
+  if ($p('taskSubmitOk')) $p('taskSubmitOk').onclick = doSubmit;
+  if ($p('taskDetailClose')) $p('taskDetailClose').onclick = () => show($p('taskDetailModal'), false);
+  if ($p('taskSubmitFileBtn')) $p('taskSubmitFileBtn').onclick = () => $p('taskSubmitFile').click();
+  if ($p('taskSubmitFile')) $p('taskSubmitFile').onchange = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { pendingTaskFile = { dataUrl: reader.result, name: file.name }; const c = $p('taskSubmitChip'); c.textContent = '📎 ' + file.name; c.classList.remove('hidden'); };
+    reader.readAsDataURL(file); e.target.value = '';
+  };
+  document.querySelectorAll('#layoutSwitch .layout-sq').forEach((b) => { b.onclick = () => setLayout(Number(b.dataset.layout)); });
+  const mf = $p('multiFuncBtn'); if (mf) mf.onclick = triggerPanelReveal;
+}
+
 // 轻提示
 function flash(msg) {
   const t = document.createElement('div'); t.className = 'flash'; t.textContent = msg;
@@ -2229,6 +2417,7 @@ function setupMobileUI() {
 (async () => {
   try { await loadTheme(); } catch {} // 首页即展示团队定制背景（主题已改为公开可读）
   setupMobileUI();
+  initTasksUI();
   if (localStorage.getItem('oc_token')) {
     try { await enter(); startTimers(); return; } catch {}
   }

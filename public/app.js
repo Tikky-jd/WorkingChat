@@ -2227,6 +2227,22 @@ const DELIVER_LABEL = { doc: '📄 文档', video: '🎬 视频', image: '🖼 �
 const TASK_STATUS_LABEL = { open: '待揭榜', accepted: '进行中', submitted: '待确认', done: '已完成', canceled: '已取消/已退单' };
 function deliverLabel(t) { return DELIVER_LABEL[t] || t; }
 function taskStatusLabel(s) { return TASK_STATUS_LABEL[s] || s; }
+// 渲染接单方提交的交付内容（发布者/接单方可见）
+function submissionHtml(t) {
+  if (!t.submission) return '';
+  const s = t.submission;
+  let html = '<div class="task-submission"><div class="task-sub-label">📦 接单方交付内容</div>';
+  if (s.text) html += `<p class="task-sub-text">${escapeHtml(s.text)}</p>`;
+  if (s.url) {
+    const name = s.name || '交付文件';
+    const isImg = /^image\//.test(s.type || '');
+    if (isImg) html += `<a href="${s.url}" target="_blank" class="task-sub-file"><img src="${s.url}" class="task-sub-img" alt="交付图片" /></a>`;
+    else html += `<a href="${s.url}" target="_blank" download class="task-sub-file">📎 ${escapeHtml(name)}</a>`;
+  }
+  if (!s.text && !s.url) html += '<p class="task-sub-text muted">（接单方未填写内容）</p>';
+  html += '</div>';
+  return html;
+}
 
 async function loadTasks() {
   try {
@@ -2271,6 +2287,8 @@ function taskCardHtml(t, where) {
     else if (t.status === 'accepted') actions = `<span class="task-tag">已接取（${escapeHtml(t.acceptedByNick || '')}）</span>`;
     else if (t.status === 'done') actions = `<span class="task-tag task-done">已完成</span>`;
   }
+  // 发布者/接单方在「待确认」「已完成」状态下可见交付内容
+  const showSub = t.submission && (where === 'published' || where === 'accepted') && (t.status === 'submitted' || t.status === 'done');
   return `<div class="task-card ${t.status === 'done' || t.status === 'canceled' ? 'task-card--done' : ''}">
     <div class="task-card-head">
       <b class="task-title">${escapeHtml(t.title)}</b>
@@ -2282,6 +2300,7 @@ function taskCardHtml(t, where) {
       <span class="task-by">发布者 ${escapeHtml(t.publisherNick || '')}</span>
     </div>
     ${t.desc ? `<p class="task-desc-text">${escapeHtml(t.desc)}</p>` : ''}
+    ${showSub ? submissionHtml(t) : ''}
     <div class="task-card-foot">${actions}</div>
   </div>`;
 }
@@ -2355,16 +2374,45 @@ function setLayout(n) {
   grid.classList.add('layout-' + n);
   document.querySelectorAll('#layoutSwitch .layout-sq').forEach((b) => b.classList.toggle('active', Number(b.dataset.layout) === n));
 }
-// 多功能按钮：四面板从左到右依次出现动画（4.3）
-function triggerPanelReveal() {
-  const panels = document.querySelectorAll('.grid .panel');
-  panels.forEach((p, i) => {
-    p.classList.remove('reveal-in');
-    void p.offsetWidth; // 强制重排以重启动画
-    p.style.animationDelay = (i * 120) + 'ms';
-    p.classList.add('reveal-in');
-  });
-  setTimeout(() => panels.forEach((p) => { p.style.animationDelay = ''; }), panels.length * 120 + 700);
+// 多功能按钮：显示/隐藏 5 个功能入口（媒体管理 / 投票 / 反馈 / 知识库 / 皇榜）
+// 出现动画：从右到左依次弹出（最右的皇榜先出现）；隐藏动画：从左到右依次收回（最左的媒体管理先收）
+let featHidden = false, featAnimating = false;
+function toggleFeatBar() {
+  if (featAnimating) return;
+  const bar = document.querySelector('.feature-bar');
+  if (!bar) return;
+  const cards = Array.from(bar.querySelectorAll('.feat-card'));
+  const N = cards.length;
+  const STEP = 90; // 各按钮错峰间隔(ms)
+  featAnimating = true;
+  if (!featHidden) {
+    // 隐藏：从左到右（最左 index0 先收）
+    cards.forEach((c, i) => {
+      c.style.animationDelay = (i * STEP) + 'ms';
+      c.classList.remove('feat-anim-show');
+      void c.offsetWidth; // 强制重排以重启动画
+      c.classList.add('feat-anim-hide');
+    });
+    setTimeout(() => {
+      cards.forEach((c) => { c.style.display = 'none'; c.classList.remove('feat-anim-hide'); c.style.animationDelay = ''; });
+      featHidden = true; featAnimating = false;
+      const mf = document.getElementById('multiFuncBtn'); if (mf) mf.classList.add('active');
+    }, N * STEP + 320);
+  } else {
+    // 显示：从右到左（最右 indexN-1 先弹）
+    cards.forEach((c, i) => {
+      c.style.display = '';
+      c.classList.remove('feat-anim-hide');
+      c.style.animationDelay = ((N - 1 - i) * STEP) + 'ms';
+      void c.offsetWidth;
+      c.classList.add('feat-anim-show');
+    });
+    setTimeout(() => {
+      cards.forEach((c) => { c.classList.remove('feat-anim-show'); c.style.animationDelay = ''; });
+      featHidden = false; featAnimating = false;
+      const mf = document.getElementById('multiFuncBtn'); if (mf) mf.classList.remove('active');
+    }, N * STEP + 420);
+  }
 }
 function initTasksUI() {
   const $p = (id) => document.getElementById(id);
@@ -2382,7 +2430,7 @@ function initTasksUI() {
     reader.readAsDataURL(file); e.target.value = '';
   };
   document.querySelectorAll('#layoutSwitch .layout-sq').forEach((b) => { b.onclick = () => setLayout(Number(b.dataset.layout)); });
-  const mf = $p('multiFuncBtn'); if (mf) mf.onclick = triggerPanelReveal;
+  const mf = $p('multiFuncBtn'); if (mf) mf.onclick = toggleFeatBar;
 }
 
 // 轻提示

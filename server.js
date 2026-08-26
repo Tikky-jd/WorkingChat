@@ -243,6 +243,14 @@ const SPIRIT_NAMES = { jp: '极品灵石', sp: '上品灵石', zp: '中品灵石
 const SPIRIT_ICONS = { jp: '💎', sp: '🔮', zp: '🪨', xp: '⚪' };
 const SPIRIT_CONVERT = { xp: 100, zp: 100, sp: 10 }; // 升一档所需低阶数：下品→中品100 / 中品→上品100 / 上品→极品10
 function newSpirit() { return { jp: 0, sp: 0, zp: 0, xp: 0 }; }
+// 灵石明细：在余额变动处调用，自动记录一条获得/支出流水
+function addSpirit(u, unit, delta, reason) {
+  if (!u.spirit) u.spirit = newSpirit();
+  if (!u.spiritLog) u.spiritLog = [];
+  u.spirit[unit] = (u.spirit[unit] || 0) + delta;
+  u.spiritLog.push({ t: Date.now(), unit, delta, reason: reason || '灵石变动', balance: u.spirit[unit] });
+  if (u.spiritLog.length > 500) u.spiritLog = u.spiritLog.slice(-500);
+}
 
 // 签到：每月 +5 活跃积分 +10 下品灵石
 const SIGNIN_REWARD = { bonus: 5, xp: 10 };
@@ -286,6 +294,7 @@ const SHOP_ITEMS = [
 
 function ensureUser(u) {
   if (!u.spirit) u.spirit = newSpirit();
+  if (!u.spiritLog) u.spiritLog = [];
   if (typeof u.bonus !== 'number') u.bonus = 0;
   if (!u.profile) u.profile = {};
   if (!u.tasks) u.tasks = {};
@@ -355,9 +364,9 @@ function dailyBought(u, itemId) { return (u.dailyLimits && u.dailyLimits[dailyBu
 function dailyLimitReached(u, itemId, limit) { return dailyBought(u, itemId) >= limit; }
 function bumpDailyBuy(u, itemId) { if (!u.dailyLimits) u.dailyLimits = {}; u.dailyLimits[dailyBuyKey(itemId)] = dailyBought(u, itemId) + 1; }
 // 领取奖励：加活跃积分 + 下品灵石
-function grantReward(u, reward) {
+function grantReward(u, reward, reason) {
   u.bonus = (u.bonus || 0) + reward.bonus;
-  u.spirit.xp = (u.spirit.xp || 0) + reward.xp;
+  if (reward.xp) addSpirit(u, 'xp', reward.xp, reason || '活跃奖励');
 }
 
 // 在线状态：email -> {roomId, ts}
@@ -694,7 +703,7 @@ async function requestHandler(req, res) {
           const sl = String(b.slogan).trim().slice(0, 30);
           if (sl !== (u.slogan || '')) {
             if ((u.spirit.xp || 0) < 50) return sendJson(res, 400, { error: '灵石不足：修改个人签名需要 50 枚下品灵石' });
-            u.spirit.xp -= 50;
+            addSpirit(u, 'xp', -50, '修改个人签名');
             u.slogan = sl;
           }
         }
@@ -712,7 +721,7 @@ async function requestHandler(req, res) {
         if ((u.signin[y] || []).includes(d)) return sendJson(res, 400, { error: '今天已经签到过啦' });
         if (!u.signin[y]) u.signin[y] = [];
         u.signin[y].push(d);
-        grantReward(u, SIGNIN_REWARD);
+        grantReward(u, SIGNIN_REWARD, '每月签到');
         saveUsers();
         return sendJson(res, 200, { ok: true, dates: u.signin[y], spirit: u.spirit, bonus: todayBonus(u), reward: SIGNIN_REWARD });
       }
@@ -749,7 +758,7 @@ async function requestHandler(req, res) {
         if (u.tasks.daily && u.tasks.daily[key]) return sendJson(res, 400, { error: '该任务奖励已领取' });
         if (!u.tasks.daily) u.tasks.daily = {};
         u.tasks.daily[key] = Date.now();
-        grantReward(u, DAILY_REWARD);
+        grantReward(u, DAILY_REWARD, '每日任务奖励');
         saveUsers();
         return sendJson(res, 200, { ok: true, spirit: u.spirit, bonus: todayBonus(u), reward: DAILY_REWARD });
       }
@@ -762,7 +771,7 @@ async function requestHandler(req, res) {
         if (!newbieDone(u)) return sendJson(res, 400, { error: '请先完成专属任务：填写个人资料' });
         if (u.tasks.newbie && u.tasks.newbie.claimed) return sendJson(res, 400, { error: '专属任务奖励已领取' });
         u.tasks.newbie = { claimed: true, claimedAt: Date.now() };
-        grantReward(u, NEWBIE_REWARD);
+        grantReward(u, NEWBIE_REWARD, '专属任务奖励');
         saveUsers();
         return sendJson(res, 200, { ok: true, spirit: u.spirit, bonus: todayBonus(u), reward: NEWBIE_REWARD });
       }
@@ -779,10 +788,20 @@ async function requestHandler(req, res) {
         if (ti !== fi + 1) return sendJson(res, 400, { error: '只能逐级向上兑换（下品→中品→上品→极品）' });
         const need = SPIRIT_CONVERT[from];
         if ((u.spirit[from] || 0) < need) return sendJson(res, 400, { error: `灵石不足：需要 ${need} 枚${SPIRIT_NAMES[from]}` });
-        u.spirit[from] -= need;
-        u.spirit[to] = (u.spirit[to] || 0) + 1;
+        const convReason = '灵石兑换(' + SPIRIT_NAMES[from] + '→' + SPIRIT_NAMES[to] + ')';
+        addSpirit(u, from, -need, convReason);
+        addSpirit(u, to, 1, convReason);
         saveUsers();
         return sendJson(res, 200, { ok: true, spirit: u.spirit });
+      }
+
+      // ---- 个人中心：灵石明细（获得/支出流水）----
+      if (p === '/api/me/spirit/log' && method === 'GET') {
+        const me2 = currentUser(req);
+        if (!me2) return sendJson(res, 401, { error: '未登录' });
+        const u = ensureUser(users.find((x) => x.email === me2));
+        const log = (u.spiritLog || []).slice().sort((a, b) => b.t - a.t);
+        return sendJson(res, 200, { ok: true, log, spirit: u.spirit });
       }
 
       // ---- 个人中心：商城（商品列表 + 我的灵石 + 已购状态）----
@@ -803,11 +822,11 @@ async function requestHandler(req, res) {
         if (!item) return sendJson(res, 404, { error: '商品不存在' });
         if ((u.spirit[item.unit] || 0) < item.price) return sendJson(res, 400, { error: `灵石不足：需要 ${item.price} 枚${SPIRIT_NAMES[item.unit]}` });
         const b = JSON.parse(await readBody(req) || '{}');
-        u.spirit[item.unit] -= item.price; // 扣款
+        addSpirit(u, item.unit, -item.price, '购买' + item.name);
         // 样式类商品不可重复购买
         const styleKey = item.category === 'style' && item.styleType ? `${item.styleType}_${item.styleId}` : '';
         if (styleKey && u.ownedStyles[styleKey]) {
-          u.spirit[item.unit] += item.price;
+          addSpirit(u, item.unit, item.price, '购买' + item.name + '退回');
           return sendJson(res, 400, { error: '你已拥有该样式，无需重复购买' });
         }
         let talismanNotify = ''; // 符类生效时的全局通知文本
@@ -885,7 +904,7 @@ async function requestHandler(req, res) {
           // 每日限购校验（藏踪符5 / 追灵符1 / 炎爆符1）
           const limit = item.dailyLimit || 1;
           if (dailyLimitReached(u, item.id, limit)) {
-            u.spirit[item.unit] += item.price;
+            addSpirit(u, item.unit, item.price, '购买' + item.name + '退回');
             return sendJson(res, 400, { error: `${item.name}每人每日限购 ${limit} 次，今日已用完` });
           }
           bumpDailyBuy(u, item.id);
@@ -903,7 +922,7 @@ async function requestHandler(req, res) {
           talismanNotify = `「${nickOf(me2)}」对「${nickOf(t.email)}」发起了真心换真心`;
           extra.heartSession = publicHeart(s, me2);
         } else {
-          u.spirit[item.unit] += item.price;
+          addSpirit(u, item.unit, item.price, '购买' + item.name + '退回');
           return sendJson(res, 404, { error: '商品不存在' });
         }
         saveUsers();
@@ -1198,7 +1217,7 @@ async function requestHandler(req, res) {
         if (!Number.isFinite(amount) || amount <= 0) return sendJson(res, 400, { error: '悬赏数量必须大于 0' });
         if (!TASK_DELIVER_TYPES.includes(deliverType)) return sendJson(res, 400, { error: '交付类型无效' });
         if ((u.spirit[unit] || 0) < amount) return sendJson(res, 400, { error: `灵石不足：需要 ${amount} 枚${SPIRIT_NAMES[unit]}` });
-        u.spirit[unit] -= amount; // 托管：先扣除，平台代管，确认后转给接单方
+        addSpirit(u, unit, -amount, '发布任务托管(' + title + ')'); // 托管：先扣除，平台代管，确认后转给接单方
         const t = { id: crypto.randomUUID(), publisher: me2, title, desc, reward: { unit, amount }, deliverType, status: 'open', acceptedBy: null, acceptedAt: null, submission: null, submittedAt: null, confirmedAt: null, createdAt: Date.now(), doneAt: null, canceledAt: null };
         tasks.push(t); saveUsers(); saveTasks();
         pushAll({ type: 'task', action: 'new', task: publicTask(t, me2) });
@@ -1239,7 +1258,7 @@ async function requestHandler(req, res) {
           if (t.publisher !== me2) return sendJson(res, 403, { error: '只有发布者可以确认' });
           if (t.status !== 'submitted') return sendJson(res, 400, { error: '接单方尚未提交，无法确认' });
           const acceptor = ensureUser(users.find((x) => x.email === t.acceptedBy));
-          acceptor.spirit[t.reward.unit] = (acceptor.spirit[t.reward.unit] || 0) + t.reward.amount; // 托管发放
+          addSpirit(acceptor, t.reward.unit, t.reward.amount, '完成任务获得悬赏(' + t.title + ')'); // 托管发放
           t.status = 'done'; t.confirmedAt = Date.now(); t.doneAt = Date.now();
           saveUsers(); saveTasks();
           pushAll({ type: 'task', action: 'confirm', task: publicTask(t, me2) });
@@ -1249,7 +1268,7 @@ async function requestHandler(req, res) {
           if (t.publisher !== me2) return sendJson(res, 403, { error: '只有发布者可以取消' });
           if (t.status !== 'open') return sendJson(res, 400, { error: '任务已被接取，无法取消（可等接单方退单）' });
           const u = ensureUser(users.find((x) => x.email === me2));
-          u.spirit[t.reward.unit] = (u.spirit[t.reward.unit] || 0) + t.reward.amount; // 退回托管
+          addSpirit(u, t.reward.unit, t.reward.amount, '任务取消退回托管(' + t.title + ')'); // 退回托管
           t.status = 'canceled'; t.canceledAt = Date.now();
           saveUsers(); saveTasks();
           pushAll({ type: 'task', action: 'cancel', task: publicTask(t, me2) });
@@ -1259,7 +1278,7 @@ async function requestHandler(req, res) {
           if (t.acceptedBy !== me2) return sendJson(res, 403, { error: '只有接单方可以退单' });
           if (t.status !== 'accepted' && t.status !== 'submitted') return sendJson(res, 400, { error: '当前状态不可退单' });
           const pub = ensureUser(users.find((x) => x.email === t.publisher));
-          pub.spirit[t.reward.unit] = (pub.spirit[t.reward.unit] || 0) + t.reward.amount; // 退回发布者托管
+          addSpirit(pub, t.reward.unit, t.reward.amount, '接单方退单退回托管(' + t.title + ')'); // 退回发布者托管
           t.status = 'canceled'; t.acceptedBy = null; t.acceptedAt = null; t.submission = null; t.submittedAt = null; t.canceledAt = Date.now();
           saveUsers(); saveTasks();
           pushAll({ type: 'task', action: 'quit', task: publicTask(t, me2) });

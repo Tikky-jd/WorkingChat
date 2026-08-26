@@ -1230,6 +1230,7 @@ function renderShop() {
         <button class="btn-ghost convert-btn" data-from="zp" data-to="sp">兑换 100 中品 → 1 上品</button>
         <button class="btn-ghost convert-btn" data-from="sp" data-to="jp">兑换 10 上品 → 1 极品</button>
       </div>
+      <div class="spirit-actions"><button class="btn-ghost" id="spiritLogBtn">📊 灵石明细</button></div>
     </div>
       <div class="me-card">
         <h3 class="me-card-t">🛒 灵石商城</h3>
@@ -1248,8 +1249,52 @@ function renderShop() {
   document.querySelectorAll('.shop-equip').forEach((b) => { b.onclick = () => equipStyle(b.dataset.type, b.dataset.id); });
   document.querySelectorAll('.shop-heart-open').forEach((b) => { b.onclick = () => openHeartPanel(); });
   const hb = $('#heartOpenBtn'); if (hb) hb.onclick = () => openHeartPanel();
+  const slb = $('#spiritLogBtn'); if (slb) slb.onclick = () => openSpiritLog();
   renderAnonIndicator();
 }
+
+// ---- 灵石明细 ----
+async function openSpiritLog() {
+  show($('#spiritLogModal'), true);
+  const list = $('#spiritLogList');
+  list.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const r = await api('GET', '/api/me/spirit/log');
+    const log = (r.log || []).slice().sort((a, b) => b.t - a.t);
+    const sp = r.spirit || {};
+    // 汇总
+    let gain = 0, spend = 0;
+    for (const e of log) { if (e.delta > 0) gain += e.delta; else spend += -e.delta; }
+    $('#spiritSummary').innerHTML = `
+      <span class="ss-item ss-gain">获得 ${gain}</span>
+      <span class="ss-item ss-spend">支出 ${spend}</span>
+      <span class="ss-sep">·</span>
+      ${SPIRIT_ORDER.slice().reverse().map((k) => `<span class="ss-item">${SPIRIT_ICONS[k]} ${sp[k] || 0} ${SPIRIT_NAMES[k].replace('灵石', '')}</span>`).join('')}`;
+    if (!log.length) {
+      list.innerHTML = '<div class="empty">暂无获得 / 支出记录，以下为当前持有：</div>' +
+        SPIRIT_ORDER.slice().reverse().map((k) => `<div class="spirit-log-row sl-bal"><span class="sl-ico">${SPIRIT_ICONS[k]}</span><span class="sl-reason">当前持有</span><span class="sl-bal-val">${sp[k] || 0} ${SPIRIT_NAMES[k].replace('灵石', '')}</span></div>`).join('');
+      return;
+    }
+    list.innerHTML = log.map((e) => {
+      const sign = e.delta > 0 ? '+' : '';
+      const cls = e.delta > 0 ? 'sl-gain' : 'sl-spend';
+      const d = new Date(e.t);
+      const ts = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const unitName = SPIRIT_NAMES[e.unit] ? SPIRIT_NAMES[e.unit].replace('灵石', '') : e.unit;
+      return `<div class="spirit-log-row ${cls}">
+        <span class="sl-ico">${SPIRIT_ICONS[e.unit] || '⚪'}</span>
+        <span class="sl-reason">${escapeHtml(e.reason || '灵石变动')}</span>
+        <span class="sl-amt">${sign}${e.delta} ${unitName}</span>
+        <span class="sl-time">${ts}</span>
+        <span class="sl-bal">余 ${e.balance}</span>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    list.innerHTML = '<div class="empty">加载失败：' + (err.message || err) + '</div>';
+  }
+}
+$('#spiritLogClose').onclick = () => show($('#spiritLogModal'), false);
+$('#spiritLogModal').addEventListener('click', (e) => { if (e.target === $('#spiritLogModal')) show($('#spiritLogModal'), false); });
 function shopItemsHtml() {
   // 与后端 SHOP_ITEMS 保持一致；kind: self=直接购买 / target=需选成员(+输入内容)；repeat=true 表示可重复购买（买过仍显示购买按钮，可叠加）
   const items = [

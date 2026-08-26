@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>协作台 · 企业团队私有协作空间</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='14' fill='%232563eb'/%3E%3Crect x='16' y='18' width='32' height='5' rx='2.5' fill='white' opacity='0.95'/%3E%3Crect x='16' y='29' width='22' height='5' rx='2.5' fill='white' opacity='0.8'/%3E%3Crect x='16' y='40' width='28' height='5' rx='2.5' fill='white' opacity='0.65'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="./styles.css?v=20260826c" />
+  <link rel="stylesheet" href="./styles.css?v=20260826d" />
 </head>
 <body data-theme="blue">
   <div id="bgLayer"></div>
@@ -536,6 +536,16 @@
     </div>
   </div>
 
+  <!-- 灵石明细 -->
+  <div id="spiritLogModal" class="modal hidden">
+    <div class="modal-card wide">
+      <div class="modal-head"><h3>📊 灵石明细</h3><button id="spiritLogClose" class="btn-ghost">✕</button></div>
+      <p class="modal-label">灵石的获得与支出记录（按时间倒序，最新在前）</p>
+      <div class="spirit-summary" id="spiritSummary"></div>
+      <div id="spiritLogList" class="spirit-log-list"><div class="empty">加载中…</div></div>
+    </div>
+  </div>
+
   <!-- 消息右键操作菜单 -->
   <div id="msgMenu" class="ctx-menu hidden">
     <button id="ctxRecall" class="ctx-item">撤回消息</button>
@@ -669,6 +679,6 @@
   </div>
 
   <script src="./config.js?v=20260821b"></script>
-  <script src="./app.js?v=20260826c"></script>
+  <script src="./app.js?v=20260826d"></script>
 </body>
 </html>

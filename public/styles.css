@@ -211,6 +211,30 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .talisman-log-time { flex: none; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .talisman-log-text { flex: 1; min-width: 0; word-break: break-word; }
 
+/* 灵石明细 */
+.spirit-actions { margin-top: 12px; }
+.spirit-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px; margin: 12px 0 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-size: 13px; }
+.spirit-summary .ss-item { color: var(--text); }
+.spirit-summary .ss-gain { color: #d23b3b; font-weight: 600; }
+.spirit-summary .ss-spend { color: #2f9e57; font-weight: 600; }
+.spirit-summary .ss-sep { color: var(--muted); }
+.spirit-log-list { max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.spirit-log-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-size: 13px;
+}
+.spirit-log-row.sl-gain { border-left: 3px solid #d23b3b; }
+.spirit-log-row.sl-spend { border-left: 3px solid #2f9e57; }
+.spirit-log-row.sl-bal { border-left: 3px solid var(--muted); }
+.spirit-log-row .sl-ico { flex: none; font-size: 15px; }
+.spirit-log-row .sl-reason { flex: 1; min-width: 0; word-break: break-word; color: var(--text); }
+.spirit-log-row .sl-amt { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
+.spirit-log-row.sl-gain .sl-amt { color: #d23b3b; }
+.spirit-log-row.sl-spend .sl-amt { color: #2f9e57; }
+.spirit-log-row .sl-time { flex: none; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.spirit-log-row .sl-bal { flex: none; font-size: 11.5px; color: var(--muted); }
+.spirit-log-row .sl-bal-val { flex: none; font-weight: 600; color: var(--text); }
+
 .messages { flex: 1; overflow-y: auto; padding: 18px 16px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .empty { color: var(--muted); text-align: center; margin: auto; font-size: 13.5px; }
 .msg-row { display: flex; }

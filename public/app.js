@@ -29,6 +29,12 @@ let editingMid = null;         // 正在重编辑的消息 id（null=发新消�
 let ctxMid = null;             // 右键选中的消息 id
 let ctxRoomId = null;          // 右键选中的任务 id（任务设置菜单）
 let pollTimer = null, presenceTimer = null;
+let pendingScrollMid = null;        // @ 提醒跳转：进入房间后滚动到该消息
+let mentionQueue = [];              // 当前弹窗中待处理的 @ 提醒
+const shownMentionIds = new Set();  // 本次会话已弹过的提醒（防重复）
+let membersCache = null;            // @ 自动补全用的成员列表缓存
+let mentionMenuOpen = false;        // @ 输入自动补全下拉是否展开
+let mentionActive = 0;              // 下拉当前高亮项索引
 let shopTab = 'prop';          // 商城当前标签：prop=道具 / style=样式
 
 const fmtTime = (t) => {
@@ -102,6 +108,9 @@ async function enter() {
   await loadRank();
   connectSSE();
   loadNotifMuted();   // 读取各任务浏览器提示开关（权限请求见 oncePerm：仅非交互区域点击触发）
+  checkMentions();    // 上线即拉取未读 @ 提醒并弹窗
+  if (!window.__mentionTimer) window.__mentionTimer = setInterval(checkMentions, 8000); // 兜底轮询已读提醒
+  loadMembers();      // 预取成员列表，供 @ 自动补全
 }
 
 // 首页「进入协作台」/ 导航登录 → 显示登录/注册
@@ -238,6 +247,8 @@ async function enterRoom(id) {
     throw e;
   }
   startRoomLive();
+  // @ 提醒定位：从弹窗跳转进来时，载入消息后自动滚动并高亮原消息
+  if (pendingScrollMid) { const mid = pendingScrollMid; pendingScrollMid = null; setTimeout(() => scrollToMention(mid), 60); }
 }
 
 // ---------- 消息 ----------
@@ -280,7 +291,7 @@ function buildMsgEl(m, animate) {
   if (animate) row.classList.add('msg-new');
   let inner = '';
   if (m.image) inner += `<img class="msg-img" src="${BASE + m.image}" alt="图片" data-act="openimg" data-src="${BASE + m.image}" onerror="this.alt='图片加载失败';this.style.opacity=0.4" />`;
-  if (m.text) inner += `<div class="text">${escapeHtml(m.text)}</div>`;
+  if (m.text) inner += `<div class="text">${renderMsgText(m)}</div>`;
   const own = m.user === me;
   const delBtn = (myRole === 'admin' || own) ? `<button class="msg-del" title="删除此消息" data-act="delmsg" data-id="${m.id}">✕</button>` : '';
   const editedTag = m.edited ? '<span class="msg-edited">已编辑</span>' : '';
@@ -340,6 +351,164 @@ function renderMessages(list) {
   updateScrollBtn();
 }
 
+// 消息正文渲染：转义后高亮 @ 提及（被 @ 的人昵称命中则标蓝，@ 自己额外高亮）
+function renderMsgText(m) {
+  let html = escapeHtml(m.text || '');
+  const nicks = m.mentionNicks || [];
+  for (const nk of nicks) {
+    if (!nk) continue;
+    const cls = (nk === myNick) ? 'mention mention-me' : 'mention';
+    const esc = nk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try { html = html.replace(new RegExp('@' + esc, 'g'), `<span class="${cls}">@${escapeHtml(nk)}</span>`); } catch {}
+  }
+  return html;
+}
+
+// ---------- @ 提及提醒（上线弹窗 + 点击定位）----------
+function scrollToMention(mid) {
+  const el = document.querySelector(`[data-mid="${mid}"]`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('mentioned-flash');
+  setTimeout(() => el.classList.remove('mentioned-flash'), 2600);
+}
+// 拉取未读 @ 提醒并弹窗（登录/定时器/SSE mention 事件都会触发）
+async function checkMentions() {
+  try {
+    const { mentions } = await api('GET', '/api/mentions');
+    let added = false;
+    for (const x of (mentions || [])) {
+      if (!shownMentionIds.has(x.id)) { shownMentionIds.add(x.id); mentionQueue.push(x); added = true; }
+    }
+    if (added) renderMentionModal();
+  } catch {}
+}
+function renderMentionModal() {
+  const box = $('#mentionList');
+  if (!mentionQueue.length) { show($('#mentionModal'), false); return; }
+  box.innerHTML = mentionQueue.map((x) => `
+    <div class="mention-item">
+      <div class="mention-info">
+        <div class="mention-from">📣 <b>${escapeHtml(x.fromNick)}</b> 在「${escapeHtml(x.roomName || '任务')}」@ 了你</div>
+        <div class="mention-preview">${escapeHtml(x.preview || '')}</div>
+      </div>
+      <div class="mention-actions">
+        <button class="btn-primary" data-act="mention-goto" data-id="${x.id}" data-room="${x.roomId}" data-mid="${x.messageId}">查看</button>
+        <button class="btn-ghost" data-act="mention-ignore" data-id="${x.id}">忽略</button>
+      </div>
+    </div>`).join('');
+  show($('#mentionModal'), true);
+}
+// 处理一条提醒：从队列移除并标记已读（点击查看或忽略都算已处理）
+async function resolveMention(id, thenGoto) {
+  const item = mentionQueue.find((x) => x.id === id);
+  mentionQueue = mentionQueue.filter((x) => x.id !== id);
+  renderMentionModal();
+  try { await api('POST', `/api/mentions/${id}/read`); } catch {}
+  if (thenGoto && item) gotoMention(item);
+}
+// 跳转到被 @ 的消息所在房间并定位
+async function gotoMention(item) {
+  const { roomId, messageId } = item;
+  pendingScrollMid = messageId;
+  const target = rooms.find((r) => r.id === roomId);
+  if (!target) { flash('该任务不存在'); return; }
+  const cur = rooms.find((r) => r.id === currentRoomId);
+  // 从加密任务切到其它任务需先确认退出
+  if (cur && cur.encrypted && currentRoomId !== roomId) {
+    pendingExitId = currentRoomId; pendingEnterId = roomId;
+    $('#exitTitle').textContent = isAdminOrCreator(cur)
+      ? `将退出加密任务「${cur.name}」（你是管理员/创建者，可随时免密返回）。`
+      : `确认退出加密任务「${cur.name}」？退出后需重新输入密码才能再次进入。`;
+    show($('#exitModal'), true);
+    return;
+  }
+  await enterRoom(roomId);
+}
+  // 弹窗右上角 ✕：全部标记为已读并关闭
+  $('#mentionClose').onclick = () => { mentionQueue.slice().forEach((x) => resolveMention(x.id, false)); };
+
+// ---------- @ 输入自动补全 ----------
+async function loadMembers() {
+  try { const { members } = await api('GET', '/api/members'); membersCache = members || []; } catch { membersCache = null; }
+}
+// 取出光标前正在输入的 @token（@ 前为行首或空白，token 内不含空白/@ 才算）
+function getMentionToken(value, caret) {
+  const upto = value.slice(0, caret);
+  const at = upto.lastIndexOf('@');
+  if (at === -1) return null;
+  const before = at === 0 ? '' : upto[at - 1];
+  if (before && !/\s/.test(before)) return null;
+  const tok = upto.slice(at + 1);
+  if (/[\s\n@]/.test(tok)) return null;
+  return { at, tok };
+}
+function hideMentionMenu() { mentionMenuOpen = false; mentionActive = 0; show($('#mentionMenu'), false); }
+function renderMentionMenu(list) {
+  const box = $('#mentionMenu');
+  if (!list.length) { hideMentionMenu(); return; }
+  box.innerHTML = list.slice(0, 8).map((m, i) => `
+    <div class="mention-opt${i === mentionActive ? ' active' : ''}" data-nick="${escapeHtml(m.nickname)}">
+      <span class="mention-opt-nick">@${escapeHtml(m.nickname)}</span>
+      <span class="mention-opt-role">${m.role === 'admin' ? '管理员' : '成员'}</span>
+    </div>`).join('');
+  show(box, true); mentionMenuOpen = true;
+}
+function moveMentionActive(dir) {
+  const opts = $('#mentionMenu').querySelectorAll('.mention-opt');
+  if (!opts.length) return;
+  mentionActive = (mentionActive + dir + opts.length) % opts.length;
+  opts.forEach((o, i) => o.classList.toggle('active', i === mentionActive));
+}
+function chooseMentionActive() {
+  const opt = $('#mentionMenu').querySelector('.mention-opt.active') || $('#mentionMenu').querySelector('.mention-opt');
+  if (opt) applyMention(opt.dataset.nick);
+}
+// 把光标前的 @token 替换为 @昵称 + 空格
+function applyMention(nick) {
+  const ta = $('#input');
+  const val = ta.value;
+  const caret = ta.selectionStart;
+  const upto = val.slice(0, caret);
+  const at = upto.lastIndexOf('@');
+  if (at === -1) return;
+  const newVal = val.slice(0, at) + '@' + nick + ' ' + val.slice(caret);
+  ta.value = newVal;
+  const pos = at + nick.length + 2;
+  ta.setSelectionRange(pos, pos);
+  ta.focus();
+  hideMentionMenu();
+}
+function onInputMention() {
+  const ta = $('#input');
+  const caret = ta.selectionStart;
+  const info = getMentionToken(ta.value, caret);
+  if (!info) { hideMentionMenu(); return; }
+  const q = info.tok.toLowerCase();
+  const list = (membersCache || []).filter((m) => m.nickname && m.nickname.toLowerCase().includes(q) && m.email !== me);
+  if (!list.length) { hideMentionMenu(); return; }
+  mentionActive = 0;
+  renderMentionMenu(list);
+}
+// 输入事件：实时筛选成员下拉
+$('#input').addEventListener('input', onInputMention);
+// mousedown 选中（避免 textarea blur 抢先关闭下拉）
+$('#mentionMenu').addEventListener('mousedown', (e) => {
+  const opt = e.target.closest('.mention-opt');
+  if (opt) { e.preventDefault(); applyMention(opt.dataset.nick); }
+});
+// 键盘：下拉展开时用上下/回车/Tab 选择，Esc 关闭
+$('#input').addEventListener('keydown', (e) => {
+  if (mentionMenuOpen) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveMentionActive(1); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); moveMentionActive(-1); return; }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); chooseMentionActive(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); hideMentionMenu(); return; }
+  }
+});
+// 点击页面其它区域关闭下拉
+document.addEventListener('click', (e) => { if (mentionMenuOpen && !e.target.closest('#mentionMenu') && e.target !== $('#input')) hideMentionMenu(); });
+
 // 管理员删除消息
 async function delMessage(mid) {
   if (!currentRoomId) return;
@@ -350,7 +519,10 @@ async function delMessage(mid) {
 window.delMessage = delMessage;
 
 $('#send').onclick = sendMsg;
-$('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
+$('#input').addEventListener('keydown', (e) => {
+  if (mentionMenuOpen && (e.key === 'Enter' || e.key === 'Tab')) { e.preventDefault(); chooseMentionActive(); return; }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+});
 async function sendMsg() {
   if (!currentRoomId) return;
   const text = $('#input').value.trim();
@@ -658,6 +830,7 @@ function connectSSE() {
           if (d.roomId === currentRoomId && !document.hidden) loadMessages().catch(() => {});
           else { bumpUnread(d.roomId); notifyNewMsg(d.roomId); }
         }
+        else if (d.type === 'mention') { checkMentions(); } // 被 @ → 立即拉取并弹窗
         else if (d.type === 'roomCreated') loadRooms().catch(() => {});
         else if (d.type === 'talisman') showTalismanNotice(d.text || '');
         else if (d.type === 'heart') {
@@ -952,6 +1125,7 @@ function goView(name) {
   show($('#page-moan'), name === 'moan');
   show($('#page-kb'), name === 'kb');
   show($('#page-tasks'), name === 'tasks');
+  show($('#page-auction'), name === 'auction');
   if (name === 'main') startRoomLive();
   else stopRoomTimers();
   if (name === 'me') loadMe();
@@ -960,6 +1134,8 @@ function goView(name) {
   if (name === 'moan') loadMoans();
   if (name === 'kb') loadKb();
   if (name === 'tasks') loadTasks();
+  if (name === 'auction') { loadAuction(); if (!window.__auctionTimer) window.__auctionTimer = setInterval(() => { if (currentView === 'auction') loadAuction(true); }, 1000); }
+  else if (window.__auctionTimer) { clearInterval(window.__auctionTimer); window.__auctionTimer = null; }
 }
 window.goView = goView;
 
@@ -1693,6 +1869,25 @@ document.addEventListener('click', (e) => {
   else if (act === 'taskprev') goCarousel(-1);         // ← 向左按钮 → 选中左侧卡片（上一任务，从服务端拉取上一个）
   else if (act === 'tasknext') goCarousel(1);          // 向右 → 按钮 → 选中右侧卡片（下一任务，从服务端拉取下一个）
   else if (act === 'taskacceptnav') { const ct = taskAtAbs(taskCenterIdx); if (ct) acceptTask(ct.id); }
+  else if (act === 'mention-goto') { resolveMention(el.dataset.id, true); }   // @ 提醒：查看 → 定位到原消息
+  else if (act === 'mention-ignore') { resolveMention(el.dataset.id, false); } // @ 提醒：忽略 → 标记已读
+  else if (act === 'auction-bid') bidAuction();
+  else if (act === 'bag-open') openBag(el.dataset.day, el.dataset.quality);
+});
+
+// 储物袋弹窗关闭（点遮罩 / ✕）
+$('#bagModal').addEventListener('click', (e) => { if (e.target === $('#bagModal')) show($('#bagModal'), false); });
+$('#bagModalClose').addEventListener('click', () => show($('#bagModal'), false));
+// 出价输入框回车即出价
+$('#bidInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); bidAuction(); } });
+// 我的竞拍：选中后右键开启
+$('#myBags').addEventListener('contextmenu', (e) => {
+  const card = e.target.closest('.my-bag');
+  if (!card) return;
+  e.preventDefault();
+  const day = card.dataset.day, quality = card.dataset.quality;
+  if (card.querySelector('.my-bag-open').disabled) { flash('该储物袋暂不可开启'); return; }
+  openBag(day, quality);
 });
 
 // ---------- 媒体管理（原工作日报板块改造；分页，每页 12 条） ----------
@@ -2623,6 +2818,146 @@ function initTasksUI() {
   };
   document.querySelectorAll('#layoutSwitch .layout-sq').forEach((b) => { b.onclick = () => setLayout(Number(b.dataset.layout)); });
   const mf = $p('multiFuncBtn'); if (mf) mf.onclick = toggleFeatBar;
+}
+
+// ===================== 每日竞拍 / 储物袋 =====================
+let auctionState = null;
+const RARITY_COLOR = { low: '#3fb950', mid: '#a371f7', high: '#f85149' };
+const RARITY_GLOW = { low: 'rgba(63,185,80,.6)', mid: 'rgba(163,113,247,.6)', high: 'rgba(248,81,73,.6)' };
+const RARITY_NAME = { low: '下品', mid: '中品', high: '上品' };
+const BAG_DIMS = { low: [3, 4], mid: [4, 5], high: [5, 6] }; // [rows, cols]
+
+async function loadAuction(silent) {
+  try {
+    const r = await api('GET', '/api/auction');
+    auctionState = r.auction;
+    $('#auctionMyXp').textContent = '下品灵石：' + (r.myXp || 0);
+    const a = r.auction;
+    const badge = $('#bagBadge');
+    badge.textContent = a.qualityName;
+    badge.style.borderColor = a.color;
+    badge.style.color = a.color;
+    badge.style.boxShadow = '0 0 0 1px ' + a.color + '33, 0 0 16px ' + a.color + '66';
+    let statusTxt, tail = '';
+    if (a.testMode) {
+      if (a.status === 'pending') { statusTxt = '⏳ 本轮竞拍尚未开始'; tail = '，' + fmtAuctionLeft(a.timeLeftMs) + '后开拍'; }
+      else if (a.status === 'open') { statusTxt = '🔥 竞拍进行中（测试模式·每分钟一场）'; tail = '，' + fmtAuctionLeft(a.timeLeftMs) + '后截拍'; }
+      else { statusTxt = '🌙 本轮竞拍已结束，等待下一轮'; }
+    } else {
+      if (a.status === 'pending') { statusTxt = '⏳ 今日竞拍尚未开始'; tail = '，' + fmtAuctionLeft(a.timeLeftMs) + '后开拍（9:00）'; }
+      else if (a.status === 'open') { statusTxt = '🔥 竞拍进行中'; tail = '，' + fmtAuctionLeft(a.timeLeftMs) + '后截拍（15:00）'; }
+      else { statusTxt = '🌙 今日竞拍已结束'; }
+    }
+    let info = `<div class="ai-line"><b>${statusTxt}</b>${tail}</div>`;
+    const startPrice = a.startPrice || 250;
+    info += `<div class="ai-line">起拍价：<b style="color:var(--primary)">${startPrice}</b> 下品灵石</div>`;
+    if (a.highest) info += `<div class="ai-line">当前最高出价：<b style="color:var(--primary)">${a.highest.amount}</b> 下品灵石（${escapeHtml(a.highest.nick)}）</div>`;
+    else info += `<div class="ai-line">暂无出价，起拍价 ${startPrice}，快来抢第一拍！</div>`;
+    info += `<div class="ai-line">参与人数：${a.bidCount} 人 ｜ 我的出价：${a.myBid || 0}</div>`;
+    if (a.iAmWinner && a.status === 'closed') {
+      info += a.opened ? `<div class="ai-line ok">🎉 你已拍得本袋储物袋，并已开启</div>` : `<div class="ai-line ok">🎉 恭喜！你拍得了${a.testMode ? '本轮' : '今日'}储物袋，去下方「我的竞拍」开启吧</div>`;
+    }
+    $('#auctionInfo').innerHTML = info;
+    const canBid = a.status === 'open';
+    const startPrice2 = a.startPrice || 250;
+    const bi = $('#bidInput');
+    bi.disabled = !canBid;
+    bi.min = startPrice2;
+    bi.step = 10;
+    bi.placeholder = '出价（≥' + startPrice2 + ' 下品灵石）';
+    $('#bidBtn').disabled = !canBid;
+    $('#bidBtn').textContent = a.status === 'pending' ? '未开拍' : (a.status === 'closed' ? '已截拍' : '出价');
+    if (!silent) loadMyBags();
+  } catch (e) { /* 静默 */ }
+}
+function fmtAuctionLeft(ms) {
+  if (ms == null) return '';
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h > 0) return `${h}小时${m}分`;
+  if (m > 0) return `${m}分${sec}秒`;
+  return `${sec}秒`;
+}
+async function bidAuction() {
+  const startPrice = (auctionState && auctionState.startPrice) || 250;
+  const v = Math.floor(Number($('#bidInput').value));
+  if (!v || v < startPrice) { flash('出价不能低于起拍价 ' + startPrice); return; }
+  try {
+    await api('POST', '/api/auction/bid', { amount: v });
+    flash('出价成功，已冻结 ' + v + ' 下品灵石');
+    $('#bidInput').value = '';
+    loadAuction(true);
+  } catch (e) { flash((e && e.message) || '出价失败'); }
+}
+async function loadMyBags() {
+  try {
+    const r = await api('GET', '/api/auction/mine');
+    const box = $('#myBags');
+    if (!r.bags.length) { box.innerHTML = '<div class="empty">还没有拍到储物袋，去上方出价夺宝吧～</div>'; return; }
+    box.innerHTML = r.bags.map((b) => {
+      const canOpen = b.status === 'closed' && !b.opened;
+      const label = b.opened ? '查看' : (canOpen ? '开启' : '（待截拍）');
+      const disabled = (b.status !== 'closed') ? 'disabled' : '';
+      return `<div class="my-bag" data-day="${b.day}" data-quality="${b.quality}" title="选中后右键可开启" style="border-color:${b.color}">
+        <div class="my-bag-badge" style="background:${b.color}">${b.qualityName}</div>
+        <div class="my-bag-day">${b.day}</div>
+        <div class="my-bag-status">${b.opened ? '已开启' : (b.status === 'closed' ? '待开启' : '竞拍中')}</div>
+        <button class="btn-primary my-bag-open" data-act="bag-open" data-day="${b.day}" data-quality="${b.quality}" ${disabled}>${label}</button>
+      </div>`;
+    }).join('');
+  } catch (e) {}
+}
+async function openBag(day, quality) {
+  const btn = document.querySelector('.my-bag-open[data-day="' + day + '"]');
+  if (btn) btn.disabled = true; // 立即禁用，防止动画期间重复点击
+  try {
+    const r = await api('POST', '/api/auction/open', { day });
+    if (!r.contents) { flash('开启失败'); return; }
+    playBagReveal(r, quality);
+    loadMyBags();      // 立即刷新「我的竞拍」：按钮变「已开启/查看」并禁用，无需刷新浏览器
+    loadAuction(true); // 同步刷新当前竞拍卡（myXp 即时更新、状态一致）
+  } catch (e) { flash((e && e.message) || '开启失败'); }
+}
+// 摸金：扫描 → 逐格爆出道具 → 价值累加计入账户
+function playBagReveal(r, quality) {
+  const color = RARITY_COLOR[quality] || '#3fb950';
+  const glow = RARITY_GLOW[quality] || 'rgba(63,185,80,.6)';
+  const dims = BAG_DIMS[quality] || [3, 4];
+  const [rows, cols] = dims;
+  const grid = $('#bagGrid');
+  grid.style.setProperty('--cols', cols);
+  grid.style.setProperty('--rows', rows);
+  grid.innerHTML = '';
+  for (let i = 0; i < rows * cols; i++) {
+    const c = document.createElement('div');
+    c.className = 'bag-cell';
+    grid.appendChild(c);
+  }
+  $('#bagModalTitle').textContent = '🔨 ' + (RARITY_NAME[quality] || '') + '储物袋';
+  $('#bagValue').textContent = '0';
+  show($('#bagModal'), true);
+  const scan = $('#bagScan');
+  scan.style.setProperty('--scan-color', color);
+  scan.classList.remove('hidden');
+  const items = r.contents || [];
+  let acc = 0;
+  items.forEach((it, idx) => {
+    setTimeout(() => {
+      const el = document.createElement('div');
+      el.className = 'bag-item pop';
+      el.style.gridRow = (it.r + 1) + ' / span ' + it.h;
+      el.style.gridColumn = (it.c + 1) + ' / span ' + it.w;
+      el.style.setProperty('--rc', RARITY_COLOR[it.rarity] || '#3fb950');
+      el.style.setProperty('--rg', RARITY_GLOW[it.rarity] || 'rgba(63,185,80,.6)');
+      el.innerHTML = `<img class="bag-item-ico" src="${it.icon || ''}" alt="" onerror="this.style.display='none'" />
+        <span class="bag-item-name">${escapeHtml(it.name || '')}</span>
+        <span class="bag-item-val">${it.value || 0}</span>`;
+      grid.appendChild(el);
+      acc += (it.value || 0);
+      $('#bagValue').textContent = acc;
+    }, 1100 + idx * 320);
+  });
+  setTimeout(() => scan.classList.add('hidden'), 1000 + items.length * 320 + 200);
 }
 
 // 轻提示

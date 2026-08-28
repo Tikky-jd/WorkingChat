@@ -316,7 +316,7 @@ body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
 .chip-img { height: 34px; border-radius: 6px; }
 .chip-x { border: 0; background: transparent; cursor: pointer; font-size: 14px; color: var(--muted); }
 .chip-tip { font-size: 12px; color: var(--muted); }
-.composer-row { display: flex; gap: 10px; align-items: flex-end; }
+.composer-row { display: flex; gap: 10px; align-items: flex-end; position: relative; }
 .composer-input { flex: 1; resize: none; border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; background: var(--bg); color: var(--text); font-size: 13.5px; outline: none; max-height: 110px; font-family: inherit; }
 .composer-input:focus { border-color: var(--primary); }
 .composer .btn-primary { width: auto; padding: 9px 20px; }
@@ -1053,3 +1053,84 @@ button:not(:disabled):active { transform: scale(.96); }
 .my-tasks-sec:last-child { margin-bottom: 0; }
 .my-tasks-h { font-size: 13.5px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
 .my-tasks-list { display: flex; flex-direction: column; gap: 10px; max-height: 38vh; overflow: auto; }
+
+/* @ 提及：消息正文高亮 + 弹窗 + 输入自动补全 */
+.mention { color: var(--primary); font-weight: 600; cursor: pointer; }
+.mention-me { color: #fff; background: var(--primary); border-radius: 4px; padding: 0 3px; }
+.mentioned-flash { animation: mentionFlash 2.4s ease-out; }
+@keyframes mentionFlash {
+  0% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 70%, transparent); background: color-mix(in srgb, var(--primary) 18%, transparent); }
+  100% { box-shadow: 0 0 0 3px transparent; background: transparent; }
+}
+.mention-modal { z-index: 100; }
+.mention-modal .modal-head h3 { margin: 0; }
+.mention-list { display: flex; flex-direction: column; gap: 10px; max-height: 50vh; overflow: auto; margin-top: 6px; }
+.mention-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--primary) 6%, var(--panel)); }
+.mention-info { flex: 1; min-width: 0; }
+.mention-from { font-size: 13.5px; color: var(--text); }
+.mention-from b { color: var(--primary); }
+.mention-preview { font-size: 12.5px; color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.mention-menu { position: absolute; left: 12px; right: 80px; bottom: calc(100% + 4px); max-height: 220px; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; z-index: 8; }
+.mention-opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.mention-opt.active, .mention-opt:hover { background: color-mix(in srgb, var(--primary) 14%, transparent); }
+.mention-opt-nick { font-weight: 600; color: var(--text); }
+.mention-opt-role { font-size: 11px; color: var(--muted); }
+
+/* ===================== 每日竞拍 / 储物袋 ===================== */
+.feat-card--auction { border-left: 3px solid #f85149; }
+.auction-body { max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+.auction-xp { font-size: 13px; color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); padding: 4px 10px; border-radius: 20px; }
+.auction-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: var(--shadow); }
+.bag-badge { display: inline-block; font-size: 15px; font-weight: 700; padding: 6px 16px; border: 2px solid; border-radius: 20px; margin-bottom: 14px; }
+.auction-info { display: flex; flex-direction: column; gap: 7px; font-size: 14px; color: var(--text); margin-bottom: 16px; }
+.auction-info .ai-line b { color: var(--text); }
+.auction-info .ai-line.ok { color: #3fb950; font-weight: 600; }
+.auction-bidrow { display: flex; gap: 10px; }
+.bid-input { flex: 1; max-width: 260px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 14px; }
+.bid-input:disabled { opacity: .5; }
+.auction-msg { margin-top: 10px; font-size: 13px; min-height: 18px; color: var(--muted); }
+.auction-mine { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; box-shadow: var(--shadow); }
+.auction-h { margin: 0 0 14px; font-size: 15px; }
+.auction-tip { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
+.my-bags { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.my-bag { border: 2px solid; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; background: color-mix(in srgb, var(--panel) 80%, #000 0%); cursor: context-menu; }
+.my-bag-badge { color: #fff; font-size: 13px; font-weight: 700; padding: 3px 12px; border-radius: 16px; }
+.my-bag-day { font-size: 12px; color: var(--muted); }
+.my-bag-status { font-size: 12.5px; color: var(--text); }
+.my-bag-open { width: 100%; }
+.my-bag-open:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 储物袋开启（摸金） */
+.bag-modal-card { max-width: 440px; }
+.bag-stage { position: relative; display: flex; justify-content: center; padding: 14px 0 6px; }
+.bag-grid { display: grid; grid-template-columns: repeat(var(--cols, 4), 46px); grid-template-rows: repeat(var(--rows, 3), 46px); gap: 5px; position: relative; }
+.bag-cell { width: 46px; height: 46px; background: rgba(130,140,160,.16); border: 1px solid rgba(255,255,255,.05); border-radius: 7px; }
+.bag-item { position: relative; z-index: 3; border-radius: 9px; border: 2px solid var(--rc, #3fb950); background: color-mix(in srgb, var(--rc, #3fb950) 14%, #11161f); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3px; overflow: hidden; animation: bagPop .42s ease-out, bagFlow 2.4s ease-in-out infinite; }
+.bag-item-ico { width: 60%; max-height: 60%; object-fit: contain; filter: drop-shadow(0 0 4px var(--rg, rgba(63,185,80,.6))); }
+.bag-item-name { font-size: 10px; line-height: 1.1; color: #fff; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bag-item-val { font-size: 10px; color: var(--rc, #3fb950); font-weight: 700; }
+@keyframes bagPop { 0% { transform: scale(.2); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); } }
+@keyframes bagFlow { 0%, 100% { box-shadow: 0 0 8px var(--rg, rgba(63,185,80,.6)); } 50% { box-shadow: 0 0 18px var(--rg, rgba(63,185,80,.6)), 0 0 30px var(--rg, rgba(63,185,80,.6)); } }
+.bag-scan { position: absolute; inset: 0; pointer-events: none; z-index: 6; overflow: hidden; }
+.bag-scan::before { content: '🔍'; position: absolute; top: 50%; font-size: 26px; transform: translateY(-50%); animation: bagScan 1s ease-in-out infinite; }
+.bag-scan::after { content: ''; position: absolute; top: 0; bottom: 0; width: 3px; background: var(--scan-color, #3fb950); box-shadow: 0 0 14px var(--scan-color, #3fb950); animation: bagScan 1s ease-in-out infinite; }
+@keyframes bagScan { 0% { left: 0; } 100% { left: calc(100% - 30px); } }
+.bag-foot { margin-top: 10px; text-align: center; font-size: 14px; color: var(--muted); }
+.bag-value { font-size: 20px; font-weight: 800; color: #3fb950; margin: 0 4px; }
+
+/* 道具管理 */
+.item-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.item-form .if { padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--text); font-size: 13px; }
+.item-form textarea.if { grid-column: 1 / -1; min-height: 52px; resize: vertical; }
+.item-form #itemSaveBtn, .item-form #itemResetBtn { grid-column: span 1; }
+.if-row { grid-column: 1 / -1; display: flex; gap: 14px; }
+.if-row label { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.if-row input { width: 64px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); }
+.item-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.item-row { border: 2px solid; border-radius: 12px; padding: 12px; background: color-mix(in srgb, var(--panel) 85%, #000 0%); display: flex; flex-direction: column; gap: 6px; }
+.item-thumb { width: 44px; height: 44px; object-fit: contain; border-radius: 8px; background: #0003; }
+.item-meta { font-size: 13px; }
+.item-rarity { font-weight: 700; }
+.item-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.item-ops { display: flex; gap: 8px; margin-top: 4px; }

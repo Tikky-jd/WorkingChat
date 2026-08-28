@@ -81,6 +81,188 @@ let talismanLog = readJson(jf('talisman_log.json'), []); // 道具/符使用记�
 // status: 'open' 待揭榜 | 'accepted' 已接单 | 'submitted' 已提交待确认 | 'done' 已完成 | 'canceled' 已取消/已退单
 let tasks = readJson(jf('tasks.json'), []);
 function saveTasks() { writeJson(jf('tasks.json'), tasks); }
+// @ 提及提醒：A 在消息里 @ 了 B，B 上线（或在线但未在该房间）即收到弹窗，点击定位到原消息
+// { id, messageId, roomId, roomName, fromEmail, fromNick, toEmail, toNick, preview, time, read }
+let mentions = readJson(jf('mentions.json'), []);
+function saveMentions() { writeJson(jf('mentions.json'), mentions); }
+
+// ===== 每日竞拍 / 储物袋 =====
+// 道具池（竞拍板块）：{id,name,rarity('low'|'mid'|'high'),value(下品灵石),desc,icon(访问路径),w,h(网格占位)}
+// 注意：data/ 被 gitignore，故种子写进代码，启动时若 items.json 为空则写入，保证部署后开箱即用。
+const SEED_ITEMS = [
+  // —— 大道具（占格 ≥6）——
+  { id: 'it_seed_qiannianlian',  name: '千年凝魂莲', rarity: 'high', value: 220, desc: '千年方得一现的凝魂莲，固魂养神，价值连城。', icon: '/auction-items/千年凝魂莲.png', w: 3, h: 3 },
+  { id: 'it_seed_liuyunjian',    name: '流云玄水剑', rarity: 'high', value: 210, desc: '玄水铸锋，挥洒如流云，剑修至宝。', icon: '/auction-items/流云玄水剑.png', w: 2, h: 4 },
+  { id: 'it_seed_shoupi',        name: '妖兽兽皮',   rarity: 'low',  value: 15,  desc: '低阶妖兽褪下的毛皮，可制轻甲。', icon: '/auction-items/妖兽兽皮.png', w: 3, h: 2 },
+  { id: 'it_seed_qingfeng',     name: '青锋灵剑',   rarity: 'high', value: 200, desc: '寒芒内敛的灵剑，斩妖如切腐。', icon: '/auction-items/青锋灵剑.png', w: 2, h: 3 },
+  // —— 中道具（占格 4）——
+  { id: 'it_seed_yaodan',        name: '妖兽妖丹',   rarity: 'mid',  value: 90,  desc: '妖兽内丹，蕴含磅礴妖力，炼化可大增修为。', icon: '/auction-items/妖兽妖丹.png',   w: 2, h: 2 },
+  { id: 'it_seed_zijin',        name: '聚灵紫金镯', rarity: 'high', value: 180, desc: '紫金铸镯，佩戴可引动周天灵气。', icon: '/auction-items/聚灵紫金镯.png', w: 2, h: 2 },
+  { id: 'it_seed_ningqizhizi',  name: '凝气紫芝',   rarity: 'mid',  value: 70,  desc: '紫气萦绕的灵芝，服之可凝练灵气、稳固修为。', icon: '/auction-items/凝气紫芝.png',   w: 2, h: 2 },
+  // —— 小道具（占格 2–3）——
+  { id: 'it_seed_linggu',        name: '妖兽灵骨',   rarity: 'low',  value: 25,  desc: '凝有妖力的兽骨，炼器良材。', icon: '/auction-items/妖兽灵骨.png', w: 1, h: 3 },
+  { id: 'it_seed_fantielingren', name: '凡铁灵刃',   rarity: 'low',  value: 28,  desc: '以凡铁淬灵而成的短刃，锋锐异常，新手防身利器。', icon: '/auction-items/凡铁灵刃.png',   w: 1, h: 2 },
+  { id: 'it_seed_xuanye',        name: '玄髓灵液',   rarity: 'mid',  value: 60,  desc: '幽深矿脉渗出的灵液，温养经脉。', icon: '/auction-items/玄髓灵液.png', w: 1, h: 2 },
+  { id: 'it_seed_qinglu',        name: '清露泉水',   rarity: 'low',  value: 30,  desc: '山巅清露汇成的灵泉，涤秽生津，温润平和。', icon: '/auction-items/清露泉水.png',   w: 1, h: 2 },
+  // —— 微小道具（占格 1）——
+  { id: 'it_seed_chuanshi',      name: '传送石',   rarity: 'low',  value: 20,  desc: '蕴含空间之力的奇石，捏碎可瞬息位移。', icon: '/auction-items/传送石.png',   w: 1, h: 1 },
+  { id: 'it_seed_qingcao',       name: '清灵草',   rarity: 'low',  value: 12,  desc: '山涧常见的清心草药。', icon: '/auction-items/清灵草.png',   w: 1, h: 1 },
+  { id: 'it_seed_yunlingmi',     name: '蕴灵蜜',   rarity: 'low',  value: 32,  desc: '灵蜂酿制的蜜，温养气血，服之通体舒泰。', icon: '/auction-items/蕴灵蜜.png',     w: 1, h: 1 },
+];
+let items = readJson(jf('items.json'), []);
+if (!Array.isArray(items) || !items.length) { items = JSON.parse(JSON.stringify(SEED_ITEMS)); }
+function saveItems() { writeJson(jf('items.json'), items); }
+if (!fs.existsSync(jf('items.json'))) saveItems();
+// 每日一场竞拍：{day,quality,status('pending'|'open'|'closed'),bids:[{email,nick,amount,time}],held:{email,amount}|null,winnerEmail,winnerNick,opened,contents,totalValue}
+let auction = readJson(jf('auction.json'), null);
+function saveAuction() { writeJson(jf('auction.json'), auction); }
+let auctionHistory = readJson(jf('auction_history.json'), []);
+function saveAuctionHistory() { writeJson(jf('auction_history.json'), auctionHistory); }
+
+const AUCTION_START_H = 9, AUCTION_END_H = 15, MIN_BID_INC = 10;
+// 测试环境：把「每日一场」改成「每分钟一场」，便于联调。
+// 通过环境变量 AUCTION_TEST=1 开启；可选 AUCTION_CYCLE_SEC（单轮总时长，默认 60）、AUCTION_OPEN_SEC（每轮可出价秒数，默认 cycle-10）。
+const AUCTION_TEST = process.env.AUCTION_TEST === '1' || process.env.AUCTION_TEST === 'true';
+const AUCTION_CYCLE_SEC = AUCTION_TEST ? (parseInt(process.env.AUCTION_CYCLE_SEC, 10) || 60) : 0;
+const AUCTION_OPEN_SEC = AUCTION_TEST ? (parseInt(process.env.AUCTION_OPEN_SEC, 10) || Math.max(5, AUCTION_CYCLE_SEC - 10)) : 0;
+function auctionCycleId() { return 'T' + Math.floor(Date.now() / (AUCTION_CYCLE_SEC * 1000)); }
+// 储物袋品质 → 网格(行,列) 与 外观（下品绿 / 中品紫 / 上品红）
+const BAG_META = {
+  low:  { name: '下品储物袋', short: '下品', rows: 3, cols: 4, color: '#3fb950', glow: 'rgba(63,185,80,.6)' },
+  mid:  { name: '中品储物袋', short: '中品', rows: 4, cols: 5, color: '#a371f7', glow: 'rgba(163,113,247,.6)' },
+  high: { name: '上品储物袋', short: '上品', rows: 5, cols: 6, color: '#f85149', glow: 'rgba(248,81,73,.6)' },
+};
+const QUALITIES = ['low', 'mid', 'high'];
+const RARITY_META = {
+  low:  { name: '下品', color: '#3fb950', glow: 'rgba(63,185,80,.55)' },
+  mid:  { name: '中品', color: '#a371f7', glow: 'rgba(163,113,247,.55)' },
+  high: { name: '上品', color: '#f85149', glow: 'rgba(248,81,73,.55)' },
+};
+function bagMeta(q) { return BAG_META[q] || BAG_META.low; }
+function rarityMeta(r) { return RARITY_META[r] || RARITY_META.low; }
+// 储物袋起拍价（下品灵石）：下品 250 / 中品 450 / 上品 650
+const START_PRICE = { low: 250, mid: 450, high: 650 };
+function startPriceOf(q) { return START_PRICE[q] || START_PRICE.low; }
+// 储物袋品质概率：上品 10% / 中品 30% / 下品 60%
+function pickBagQuality() {
+  const r = Math.random();
+  if (r < 0.10) return 'high';
+  if (r < 0.40) return 'mid'; // 0.10–0.40 ⇒ 30%
+  return 'low';               // 0.40–1.00 ⇒ 60%
+}
+function itemById(id) { return items.find((x) => x.id === id); }
+function topBidOf(a) {
+  if (!a.bids || !a.bids.length) return null;
+  return a.bids.reduce((best, b) => (b.amount > best.amount || (b.amount === best.amount && b.time < best.time)) ? b : best);
+}
+// 类「摸金」背包格：在 rows×cols 网格里随机摆放若干道具，可能铺满也可能留空
+function genBagContents(quality) {
+  const meta = bagMeta(quality);
+  const rows = meta.rows, cols = meta.cols;
+  const occupied = new Array(rows * cols).fill(false);
+  const placed = [];
+  const pool = items.length ? items : SEED_ITEMS;
+  let budget = Math.floor(rows * cols * (0.5 + Math.random() * 0.42)); // 目标占用 50%~92%
+  let guard = 0;
+  while (budget > 0 && guard++ < 400 && placed.length < 14) {
+    const it = pool[Math.floor(Math.random() * pool.length)];
+    const w = Math.min((it.w && it.w >= 1) ? it.w : (1 + Math.floor(Math.random() * 2)), cols);
+    const h = Math.min((it.h && it.h >= 1) ? it.h : (1 + Math.floor(Math.random() * 2)), rows);
+    const spots = [];
+    for (let r = 0; r <= rows - h; r++) for (let c = 0; c <= cols - w; c++) {
+      let ok = true;
+      for (let dr = 0; dr < h && ok; dr++) for (let dc = 0; dc < w && ok; dc++) if (occupied[(r + dr) * cols + (c + dc)]) ok = false;
+      if (ok) spots.push([r, c]);
+    }
+    if (!spots.length) break;
+    const [r, c] = spots[Math.floor(Math.random() * spots.length)];
+    for (let dr = 0; dr < h; dr++) for (let dc = 0; dc < w; dc++) occupied[(r + dr) * cols + (c + dc)] = true;
+    placed.push({ itemId: it.id, r, c, w, h });
+    budget -= w * h;
+  }
+  return placed;
+}
+function resolveContents(a) {
+  return (a.contents || []).map((p) => {
+    const it = itemById(p.itemId) || {};
+    return { ...p, name: it.name, icon: it.icon, rarity: it.rarity, value: it.value, desc: it.desc };
+  });
+}
+// 每日竞拍调度：跨天归档旧场→生成新场；按本地时间切换 pending/open/closed
+// 测试模式（AUCTION_TEST=1）：每分钟一轮，循环内前 AUCTION_OPEN_SEC 秒可出价，其余时间落槌，下一分钟开新场。
+function tickAuction() {
+  const now = new Date();
+  if (AUCTION_TEST) {
+    const day = auctionCycleId();
+    if (!auction || auction.day !== day) {
+      if (auction) { if (auction.status !== 'closed') closeAuction(); auctionHistory.unshift(auction); if (auctionHistory.length > 60) auctionHistory.length = 60; saveAuctionHistory(); }
+      const q1 = pickBagQuality();
+      auction = { day, quality: q1, startPrice: startPriceOf(q1), status: 'open', bids: [], held: null, winnerEmail: null, winnerNick: null, opened: false, contents: null, totalValue: 0, createdAt: Date.now() };
+      saveAuction();
+    }
+    const secInCycle = Math.floor(Date.now() / 1000) % AUCTION_CYCLE_SEC;
+    if (secInCycle < AUCTION_OPEN_SEC) { if (auction.status !== 'open') { auction.status = 'open'; saveAuction(); } }
+    else if (auction.status !== 'closed') closeAuction();
+    return;
+  }
+  const day = todayStr();
+  if (!auction || auction.day !== day) {
+    if (auction) { auctionHistory.unshift(auction); if (auctionHistory.length > 60) auctionHistory.length = 60; saveAuctionHistory(); }
+    const q1 = pickBagQuality();
+    auction = { day, quality: q1, startPrice: startPriceOf(q1), status: 'pending', bids: [], held: null, winnerEmail: null, winnerNick: null, opened: false, contents: null, totalValue: 0, createdAt: Date.now() };
+    saveAuction();
+  }
+  const h = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+  if (h < AUCTION_START_H) { if (auction.status !== 'pending') { auction.status = 'pending'; saveAuction(); } return; }
+  if (h < AUCTION_END_H) { if (auction.status !== 'open') { auction.status = 'open'; saveAuction(); } return; }
+  if (auction.status !== 'closed') closeAuction();
+}
+function closeAuction() {
+  auction.status = 'closed';
+  const top = topBidOf(auction);
+  auction.winnerEmail = top ? top.email : null;
+  auction.winnerNick = top ? top.nick : null;
+  // 冻结灵石处理：中标者冻结的即「成交价」，消耗不退还；其余手持者（被超越/未中标）全额退还
+  if (auction.held && auction.held.email !== auction.winnerEmail) {
+    const u = users.find((x) => x.email === auction.held.email);
+    if (u) { addSpirit(u, 'xp', auction.held.amount, '竞拍未中标退款'); saveUsers(); }
+  }
+  auction.held = null;
+  saveAuction();
+}
+// 开启储物袋：生成内容并按总价值计入得主账户（重复开启返回已有内容，不再重复计入）
+function openBagForUser(day, email) {
+  const a = (auction && auction.day === day) ? auction : auctionHistory.find((x) => x.day === day);
+  if (!a) return { error: '竞拍不存在' };
+  if (a.winnerEmail !== email) return { error: '你不是该储物袋的得主' };
+  if (a.opened && a.contents) {
+    return { opened: true, again: true, contents: resolveContents(a), totalValue: a.totalValue || 0, quality: a.quality };
+  }
+  const placed = genBagContents(a.quality);
+  a.contents = placed;
+  a.opened = true;
+  const total = placed.reduce((s, p) => s + (itemById(p.itemId)?.value || 0), 0);
+  a.totalValue = total;
+  const u = users.find((x) => x.email === email);
+  if (u && total) addSpirit(u, 'xp', total, '开启' + bagMeta(a.quality).name + '收益');
+  saveUsers();
+  if (auction === a) saveAuction(); else saveAuctionHistory();
+  return { opened: true, contents: resolveContents(a), totalValue: total, quality: a.quality };
+}
+// 道具缩略图：写入 public/auction-items/，访问路径 /auction-items/xxx
+const ITEM_ICON_DIR = path.join(PUBLIC_DIR, 'auction-items');
+if (!fs.existsSync(ITEM_ICON_DIR)) fs.mkdirSync(ITEM_ICON_DIR, { recursive: true });
+function saveItemIcon(dataUrl) {
+  const mm = dataUrl.match(/^data:(image\/(\w+));base64,(.+)$/);
+  if (!mm) throw new Error('仅支持图片');
+  const ext = (mm[2] === 'jpeg' ? 'jpg' : mm[2]).toLowerCase();
+  if (!IMAGE_EXTS[ext]) throw new Error('仅支持 JPG / PNG / GIF / WebP 格式的图片');
+  const buf = Buffer.from(mm[3], 'base64');
+  if (buf.length > 5 * 1024 * 1024) throw new Error('图片超过 5MB 限制');
+  const fname = `item-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  fs.writeFileSync(path.join(ITEM_ICON_DIR, fname), buf);
+  return '/auction-items/' + fname;
+}
 // 某用户当前已接取（限时任务）数量：接单且未完成（accepted/submitted）的都算占用名额
 function activeAcceptedCount(email) {
   return tasks.filter((t) => t.acceptedBy === email && (t.status === 'accepted' || t.status === 'submitted')).length;
@@ -387,6 +569,15 @@ function pushAll(data) {
   const payload = 'data: ' + JSON.stringify(data) + '\n\n';
   for (const [, set] of sseClients) for (const res of set) { try { res.write(payload); } catch {} }
 }
+// 定向推送给指定用户的所有 SSE 连接（@ 提及等私聊事件）。返回是否真的推到了在线客户端
+function pushTo(email, data) {
+  const set = sseClients.get(email);
+  if (!set || !set.size) return false;
+  const payload = 'data: ' + JSON.stringify(data) + '\n\n';
+  let ok = false;
+  for (const res of set) { try { res.write(payload); ok = true; } catch {} }
+  return ok;
+}
 
 function currentUser(req) {
   const h = req.headers['authorization'] || '';
@@ -498,6 +689,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 function serveStatic(req, res) {
   addSecurityHeaders(res);
   let p = url.parse(req.url).pathname;
+  try { p = decodeURIComponent(p); } catch (e) {}
   if (p === '/') p = '/index.html';
   const filePath = path.normalize(path.join(PUBLIC_DIR, p));
   if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end('forbidden'); return; }
@@ -979,6 +1171,89 @@ async function requestHandler(req, res) {
         return sendJson(res, 200, { invite: invites[invites.length - 1] });
       }
 
+      // ===== 每日竞拍 / 储物袋 =====
+      if (p === '/api/auction' && method === 'GET') {
+        tickAuction();
+        const top = topBidOf(auction);
+        const myBid = auction.bids.filter((b) => b.email === me).reduce((m, b) => Math.max(m, b.amount), 0);
+        const meta = bagMeta(auction.quality);
+        const now = new Date();
+        let timeLeftMs = null;
+        if (AUCTION_TEST) {
+          const secInCycle = Math.floor(Date.now() / 1000) % AUCTION_CYCLE_SEC;
+          if (auction.status === 'open') timeLeftMs = Math.max(0, (AUCTION_OPEN_SEC - secInCycle) * 1000);
+          else timeLeftMs = Math.max(0, (AUCTION_CYCLE_SEC - secInCycle) * 1000); // 距下一轮开场
+        } else {
+          const h = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+          if (auction.status === 'pending') timeLeftMs = Math.max(0, (AUCTION_START_H - h) * 3600 * 1000);
+          else if (auction.status === 'open') timeLeftMs = Math.max(0, (AUCTION_END_H - h) * 3600 * 1000);
+        }
+        const u = users.find((x) => x.email === me);
+        return sendJson(res, 200, {
+          auction: {
+            day: auction.day, quality: auction.quality, qualityName: meta.name, color: meta.color,
+            status: auction.status, timeLeftMs, startPrice: auction.startPrice || startPriceOf(auction.quality),
+            highest: top ? { email: top.email, nick: top.nick, amount: top.amount } : null,
+            bidCount: (auction.bids.length ? new Set(auction.bids.map((b) => b.email)).size : 0), myBid: myBid || 0,
+            iAmWinner: auction.winnerEmail === me,
+            canOpen: auction.winnerEmail === me && auction.status === 'closed' && !auction.opened,
+            opened: auction.opened,
+          },
+          myXp: (u && u.spirit && u.spirit.xp) || 0,
+          isAdmin: isAdmin(me),
+          testMode: AUCTION_TEST, cycleSec: AUCTION_CYCLE_SEC, openSec: AUCTION_OPEN_SEC,
+        });
+      }
+      if (p === '/api/auction/bid' && method === 'POST') {
+        tickAuction();
+        const u = ensureUser(users.find((x) => x.email === me));
+        if (auction.status !== 'open') return sendJson(res, 400, { error: AUCTION_TEST ? `当前不是竞拍时间（每轮开场后约 ${AUCTION_OPEN_SEC} 秒内可出价）` : '当前不是竞拍时间（每日 9:00–15:00 开放出价）' });
+        const b = JSON.parse(await readBody(req) || '{}');
+        const amount = Math.floor(Number(b.amount));
+        if (!Number.isFinite(amount) || amount < 1) return sendJson(res, 400, { error: '出价必须是正整数' });
+        const startPrice = auction.startPrice || startPriceOf(auction.quality);
+        const top = topBidOf(auction);
+        const minReq = top ? top.amount + MIN_BID_INC : startPrice;
+        if (amount < minReq) return sendJson(res, 400, { error: top ? `出价至少 ${minReq}（每次加价 ≥ ${MIN_BID_INC}）` : `起拍价 ${startPrice}，你的出价不能低于起拍价` });
+        const bal = (u.spirit && u.spirit.xp) || 0;
+        if (bal < amount) return sendJson(res, 400, { error: `下品灵石不足（你有 ${bal}，需 ${amount}）` });
+        // 退还上一手持者（含自己调整出价），再冻结新出价
+        if (auction.held) {
+          const prev = users.find((x) => x.email === auction.held.email);
+          if (prev) addSpirit(prev, 'xp', auction.held.amount, prev.email === me ? '调整出价退还' : '竞拍出价被超越退款');
+        }
+        addSpirit(u, 'xp', -amount, '竞拍出价冻结');
+        auction.held = { email: me, amount };
+        auction.bids.push({ email: me, nick: nickOf(me), amount, time: Date.now() });
+        saveUsers(); saveAuction();
+        return sendJson(res, 200, { ok: true, myXp: u.spirit.xp });
+      }
+      if (p === '/api/auction/mine' && method === 'GET') {
+        tickAuction();
+        const WEEK = 7 * 24 * 3600 * 1000;
+        const cutoff = Date.now() - WEEK;
+        // 仅保留近一周拍得的储物袋
+        const all = [auction, ...auctionHistory].filter(Boolean).filter((a) => (a.createdAt || 0) >= cutoff);
+        const bags = all.filter((a) => a.winnerEmail === me).map((a) => ({
+          day: a.day, quality: a.quality, qualityName: bagMeta(a.quality).name, color: bagMeta(a.quality).color,
+          opened: a.opened, status: a.status,
+        }));
+        // 同步裁剪历史存储，避免无限增长
+        const before = auctionHistory.length;
+        auctionHistory = auctionHistory.filter((a) => (a.createdAt || 0) >= cutoff);
+        if (auctionHistory.length !== before) saveAuctionHistory();
+        return sendJson(res, 200, { bags });
+      }
+      if (p === '/api/auction/open' && method === 'POST') {
+        const b = JSON.parse(await readBody(req) || '{}');
+        const day = String(b.day || '');
+        const r = openBagForUser(day, me);
+        if (r.error) return sendJson(res, r.error === '竞拍不存在' ? 404 : 403, { error: r.error });
+        return sendJson(res, 200, r);
+      }
+      // 道具池（竞拍板块）：仅对内读取，管理（增删改）功能已移除
+      if (p === '/api/items' && method === 'GET') return sendJson(res, 200, { items });
+
       // ---- 任务室 ----
       if (p === '/api/rooms' && method === 'GET') {
         return sendJson(res, 200, { rooms: rooms.map((r) => ({ id: r.id, name: r.name, createdBy: r.createdBy, createdAt: r.createdAt, encrypted: !!r.encrypted })) });
@@ -1075,7 +1350,58 @@ async function requestHandler(req, res) {
         if (anon) saveUsers();
         messages.push(msg); saveMessages();
         pushRoomEvent(roomId, { type: 'message', roomId });
+        // ---- @ 提及：解析文本中的 @昵称，给被提及用户落一条未读提醒 ----
+        const nickMap = new Map();
+        for (const u of users) if (u.nickname) nickMap.set(u.nickname, u.email);
+        const mentionTargets = [];
+        const seenM = new Set();
+        if (text) {
+          const reM = /@([^\s@，。！？、；：（）「」【】“”‘’.,!?;:()\[\]"']+)/g;
+          let mm;
+          while ((mm = reM.exec(text))) {
+            const tok = mm[1];
+            const email = nickMap.get(tok);
+            if (email && email !== me && !seenM.has(email)) { seenM.add(email); mentionTargets.push({ email, nick: tok }); }
+          }
+        }
+        if (mentionTargets.length) {
+          msg.mentions = mentionTargets.map((x) => x.email);
+          msg.mentionNicks = mentionTargets.map((x) => x.nick);
+          saveMessages();
+          const preview = (text || '').slice(0, 60);
+          const fromNick = nickOf(me);
+          const roomName = room.name;
+          for (const t of mentionTargets) {
+            const rec = {
+              id: crypto.randomUUID(), messageId: msg.id, roomId, roomName,
+              fromEmail: me, fromNick, toEmail: t.email, toNick: t.nick,
+              preview, time: msg.time, read: false,
+            };
+            mentions.push(rec); saveMentions();
+            // 实时：被提及者当前在线（已建 SSE 连接）且不在该消息所在房间（同房间能直接看到，无需弹窗）→ 立即推送
+            if (sseClients.has(t.email)) {
+              const st = presence.get(t.email);
+              if (!st || st.roomId !== roomId) {
+                pushTo(t.email, { type: 'mention', mention: { id: rec.id, fromNick, roomName, preview, roomId, messageId: msg.id, time: rec.time } });
+              }
+            }
+          }
+        }
         return sendJson(res, 200, { message: msg });
+      }
+      // ---- @ 提醒：被提及者拉取自己的未读提醒（登录/在线心跳/SSE 触发）----
+      if (p === '/api/mentions' && method === 'GET') {
+        const list = mentions
+          .filter((x) => x.toEmail === me && !x.read)
+          .sort((a, b) => (b.time || 0) - (a.time || 0))
+          .map((x) => ({ id: x.id, fromNick: x.fromNick, roomName: x.roomName, roomId: x.roomId, messageId: x.messageId, preview: x.preview, time: x.time }));
+        return sendJson(res, 200, { mentions: list });
+      }
+      const mread = p.match(/^\/api\/mentions\/([^/]+)\/read$/);
+      if (mread && method === 'POST') {
+        const rec = mentions.find((x) => x.id === mread[1] && x.toEmail === me);
+        if (rec) { rec.read = true; saveMentions(); }
+        return sendJson(res, 200, { ok: true });
       }
       // ---- 删除 / 编辑单条消息 ----
       const md = p.match(/^\/api\/rooms\/([^/]+)\/messages\/([^/]+)$/);
@@ -1692,6 +2018,10 @@ async function requestHandler(req, res) {
   }
 }
 // 优先 HTTPS（生产，适配 GitHub Pages 等 HTTPS 前端）。
+// 每日竞拍调度：启动即跑一次；测试模式每 5s 巡检（保证每分钟一轮的截拍/开拍及时切换），生产每 30s。
+tickAuction();
+setInterval(tickAuction, AUCTION_TEST ? 5000 : 30000);
+
 // 证书检测顺序：
 //   1) SSL_KEY + SSL_CERT 环境变量（PEM）
 //   2) 项目 deploy/certs/key.pem + cert.pem（PEM，gen-cert.ps1 的 openssl 路径产出）
